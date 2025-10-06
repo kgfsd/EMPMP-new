@@ -1,0 +1,17 @@
+exprs/
+runs/
+pretrain_model/
+*.[p][y][c]
+.vscode/
+data_copy/
+data/*
+!data/.gitkeep
+delete_empty_dir.py
+monitor.py
+.vscode/
+readme_cn.md
+monitor.py
+src_copy/
+# Ignore pretrained model files but keep the directory
+pt_ckpts/*
+!pt_ckpts/.gitkeep

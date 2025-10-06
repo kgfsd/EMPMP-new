@@ -48,7 +48,8 @@ C.dataset="others"
 C.h36m_anno_dir = osp.join(C.root_dir, 'data/h36m/')
 C.motion = edict()
 
-C.n_p=3
+C.n_p=3  # Default number of people (for backwards compatibility)
+C.max_p=3  # Maximum number of people the model can handle (for variable person count support)
 C.t_his=30
 C.t_pred=30
 C.dct_len=30
@@ -82,6 +83,8 @@ C.motion_mlp.num_layers = 48# Number of layers
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
+C.motion_mlp.interaction_interval = 2  # Interaction interval for person interactions
+C.motion_mlp.max_p = C.max_p  # Maximum number of people for variable person count
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim

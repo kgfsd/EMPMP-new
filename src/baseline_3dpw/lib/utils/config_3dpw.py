@@ -14,7 +14,9 @@ strike = 2
 input_length = 16
 output_length = 14
 num_joint = 13
-num_person = 2
+num_person = 2  # Default number of people (for backwards compatibility)
+min_person = 9  # Minimum number of people in variable person count scenarios
+max_person = 15  # Maximum number of people in variable person count scenarios
 
 ## train & test
 # pretrain 
@@ -183,6 +185,14 @@ def parse_args():
                         type=int, 
                         default=num_person,
                         help='number of person in a scene')    
+    parser.add_argument('--min_N', 
+                        type=int, 
+                        default=min_person,
+                        help='minimum number of person in variable person count scenarios')    
+    parser.add_argument('--max_N', 
+                        type=int, 
+                        default=max_person,
+                        help='maximum number of person in variable person count scenarios')    
     
     args = parser.parse_args()
 

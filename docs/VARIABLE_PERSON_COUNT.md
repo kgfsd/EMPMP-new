@@ -1,15 +1,17 @@
-# Variable Person Count Support
+# Variable Person Count Support (9-15 People)
 
 ## Overview
 
-The EMPMP-new model architecture has been enhanced to support **variable numbers of people** while maintaining its lightweight characteristics. This allows the model to handle datasets and scenarios with different person counts (1, 2, or 3 people) without retraining or architecture changes.
+The EMPMP-new model architecture has been enhanced to support **variable numbers of people (9-15 people)** while maintaining its lightweight characteristics. This allows the model to handle datasets and scenarios with variable person counts where people can enter and exit scenes without retraining or architecture changes.
 
 ## Key Features
 
-- **Dynamic Person Count**: The model can now process inputs with 1, 2, or up to `max_p` people in a single batch
+- **Dynamic Person Count**: The model can now process inputs with 9 to 15 people in a single batch
+- **Variable Person Scenarios**: Supports scenes where people enter and exit dynamically
 - **Lightweight Design**: Uses efficient padding and masking instead of creating separate models for each person count
-- **Backward Compatible**: Existing configurations and trained models continue to work
+- **Backward Compatible**: Existing configurations and trained models continue to work (default 2-3 people)
 - **Zero Overhead**: No additional computational cost when using the maximum person count
+- **Configurable Range**: Min and max person counts are configurable (default: min_p=9, max_p=15)
 
 ## How It Works
 
@@ -40,19 +42,27 @@ The key changes enable variable person counts through:
 
 ## Configuration
 
-### Setting Maximum Person Count
+### Setting Variable Person Count Range
 
 In your config file (e.g., `src/baseline_h36m_30to30/config.py`):
 
 ```python
-# Maximum number of people the model can handle
-C.max_p = 3  # Can be 1, 2, 3, or more
-
-# For backward compatibility, n_p is still supported
-C.n_p = 3
+# Number of people configuration
+C.n_p = 3     # Default number (for backward compatibility)
+C.min_p = 9   # Minimum number of people in variable person count scenarios
+C.max_p = 15  # Maximum number of people in variable person count scenarios
 
 # Motion MLP configuration
+C.motion_mlp.min_p = C.min_p
 C.motion_mlp.max_p = C.max_p
+```
+
+For 3DPW datasets (in `src/baseline_3dpw/lib/utils/config_3dpw.py`):
+
+```python
+num_person = 2     # Default (backward compatibility)
+min_person = 9     # Minimum number of people
+max_person = 15    # Maximum number of people
 ```
 
 ### Training Configuration

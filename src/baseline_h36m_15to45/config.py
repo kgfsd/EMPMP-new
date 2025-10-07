@@ -48,7 +48,9 @@ C.dataset="others"
 C.h36m_anno_dir = osp.join(C.root_dir, 'data/h36m/')
 C.motion = edict()
 
-C.n_p=3
+C.n_p=3  # Default number of people (for backwards compatibility)
+C.min_p=9  # Minimum number of people in variable person count scenarios
+C.max_p=15  # Maximum number of people in variable person count scenarios
 C.t_his=15
 C.t_pred=45
 C.dct_len=max(C.t_his,C.t_pred)
@@ -81,7 +83,9 @@ C.motion_mlp.num_layers = 64
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
-C.motion_mlp.p = 3
+C.motion_mlp.p = 3  # Default for backwards compatibility
+C.motion_mlp.min_p = C.min_p  # Minimum number of people for variable person count
+C.motion_mlp.max_p = C.max_p  # Maximum number of people for variable person count
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim

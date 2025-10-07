@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from copy import deepcopy as c
 import torch_dct as dct
 class DATA(Dataset):
-    def __init__(self, mode, t_his=15, t_pred=45,use_v=False,n_p=3):
+    def __init__(self, mode, t_his=15, t_pred=45,use_v=False,n_p=3,min_p=9,max_p=15):
         if mode=="train":
             self.data=np.load('./data/train_3_120_mocap.npy',allow_pickle=True)
         elif mode=="test":
@@ -27,6 +27,9 @@ class DATA(Dataset):
         if n_p==1:
             self.data=self.data.reshape(self.data.shape[0],self.data.shape[1],self.data.shape[2],-1)[:,:1,:,:]
 
+        self.n_p = n_p  # Store number of people
+        self.min_p = min_p  # Minimum number of people (for variable person count)
+        self.max_p = max_p  # Maximum number of people (for variable person count)
         self.traj_dim = 15 * 3
         if use_v==True:
             self.traj_dim = 16 * 3
@@ -105,7 +108,7 @@ class DATA(Dataset):
             visuaulize(results,prefix,output_dir)
 def main():
     # 创建训练集实例
-    train_dataset = DATA(mode="train", t_his=15, t_pred=45,n_p=3)
+    train_dataset = DATA(mode="train", t_his=15, t_pred=45,n_p=3,min_p=9,max_p=15)
     
     print(f"训练集大小: {len(train_dataset)}")
     

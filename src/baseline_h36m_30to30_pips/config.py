@@ -48,7 +48,9 @@ C.dataset="others"
 C.h36m_anno_dir = osp.join(C.root_dir, 'data/h36m/')
 C.motion = edict()
 
-C.n_p=3
+C.n_p=3  # Default number of people (for backwards compatibility)
+C.min_p=9  # Minimum number of people in variable person count scenarios
+C.max_p=15  # Maximum number of people in variable person count scenarios
 C.t_his=30
 C.t_pred=30
 C.dct_len=30

@@ -59,7 +59,7 @@ class siMLPe(nn.Module):
 
         nn.init.constant_(self.motion_fc_out.bias, 0)
 
-    def forward(self, motion_input,traj):
+    def forward(self, motion_input,traj, padding_mask=None):
         distances=compute_distances_hierarchical_normalization(traj,zero_score=False)
         if self.temporal_fc_in:
             motion_feats = self.arr0(motion_input)
@@ -68,7 +68,7 @@ class siMLPe(nn.Module):
             motion_feats = self.motion_fc_in(motion_input)#B,P,T,D
             motion_feats = self.arr0(motion_feats)#B,P,D,T
 
-        motion_feats = self.motion_mlp(motion_feats,distances)
+        motion_feats = self.motion_mlp(motion_feats,distances, padding_mask=padding_mask)
 
         if self.temporal_fc_out:
             motion_feats = self.motion_fc_out(motion_feats)

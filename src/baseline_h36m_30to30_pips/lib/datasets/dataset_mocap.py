@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from copy import deepcopy as c
 import torch_dct as dct
 class DATA(Dataset):
-    def __init__(self, mode, t_his=15, t_pred=45,use_v=False,n_p=3):
+    def __init__(self, mode, t_his=15, t_pred=45,use_v=False,n_p=3, max_p=None, variable_persons=False):
         if mode=="train":
             self.data=np.load('./data/train_3_120_mocap.npy',allow_pickle=True)
         elif mode=="test":
@@ -38,6 +38,10 @@ class DATA(Dataset):
         self.t_pred = t_pred
         self.t_total = t_his + t_pred
         self.std, self.mean = None, None
+        
+        self.n_p = n_p
+        self.max_p = max_p if max_p is not None else n_p
+        self.variable_persons = variable_persons
         
         self.normalized = False
         # iterator specific

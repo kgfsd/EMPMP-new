@@ -104,10 +104,15 @@ def zero_module(module):
 
 class StylizationBlock(nn.Module):
 
-    def __init__(self, time_dim, num_p,dim):
+    def __init__(self, time_dim, num_p,dim, max_p=None):
         super().__init__()
+        # Use max_p if provided, otherwise use num_p for backward compatibility
+        effective_p = max_p if max_p is not None else num_p
+        self.num_p = num_p
+        self.max_p = effective_p
+        
         self.emb_layers = nn.Sequential(
-            nn.Linear(time_dim*num_p, 2 * time_dim),#pt->2t
+            nn.Linear(time_dim*effective_p, 2 * time_dim),#pt->2t
         )
         self.norm = LN(dim)
         self.norm_global=LN(dim)
@@ -115,13 +120,13 @@ class StylizationBlock(nn.Module):
             zero_module(nn.Linear(time_dim, time_dim)),
         )
         self.global_emb_layers = nn.Sequential(
-            nn.Linear(time_dim*num_p, time_dim*num_p),#pt->pt
+            nn.Linear(time_dim*effective_p, time_dim*effective_p),#pt->pt
         )
         
         self.temp_linear=nn.Sequential(
             nn.Linear(time_dim, time_dim),
         )
-        self.dis_linear=nn.Linear(num_p,dim)
+        self.dis_linear=nn.Linear(effective_p,dim)
         # self.temp_linear2=nn.Sequential(
         #     zero_module(nn.Linear(dim+1, dim)),
         # )
@@ -137,97 +142,167 @@ class StylizationBlock(nn.Module):
         #     zero_module(nn.Linear(time_dim, time_dim)),
         # )
         # self.temp_norm2=LN(dim)
-    def forward(self, x, x_global,distances):
+    def forward(self, x, x_global,distances, padding_mask=None):
         """
         x: B, P,D,T
         x_global: B,D,PT
-        distances: B,P,1,T
+        distances: B,P,1,T or B,T,P,P
+        padding_mask: B,P (optional, 1 for valid persons, 0 for padded)
         """
+        b, p, d, t = x.shape
+        # Pad x to max_p if needed
+        if p < self.max_p:
+            pad_size = self.max_p - p
+            x_padded = torch.cat([x, torch.zeros(b, pad_size, d, t, device=x.device)], dim=1)
+            if padding_mask is None:
+                padding_mask = torch.cat([torch.ones(b, p, device=x.device), torch.zeros(b, pad_size, device=x.device)], dim=1)
+        else:
+            x_padded = x
+            if padding_mask is None:
+                padding_mask = torch.ones(b, p, device=x.device)
+        
+        # Pad distances to max_p if needed
+        if distances.dim() == 4 and distances.shape[2] == 1:  # B,P,1,T
+            if p < self.max_p:
+                distances_padded = torch.cat([distances, torch.zeros(b, self.max_p - p, 1, t, device=distances.device)], dim=1)
+            else:
+                distances_padded = distances
+        elif distances.dim() == 4:  # B,T,P,P
+            if p < self.max_p:
+                pad_size = self.max_p - p
+                distances_padded = torch.cat([
+                    torch.cat([distances, torch.zeros(b, t, pad_size, p, device=distances.device)], dim=2),
+                    torch.zeros(b, t, self.max_p, pad_size, device=distances.device)
+                ], dim=3)
+            else:
+                distances_padded = distances
+        else:
+            distances_padded = distances
+            
         post_x=False
         if post_x:#先更新x，用更新后的x更新x_global
-            x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,PT
+            x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,PT_max
             x_global_clone = self.emb_layers(x_global_clone)#b,1,d,2t
             # scale: B,1, d, t / shift: B,1, d, t
             scale, shift = torch.chunk(x_global_clone, 2, dim=-1)
-            x = x* (1 + scale) + shift#B,P,D,T
-            x = self.out_layers(x)
-            x=self.norm(x)#B,P,D,T
+            x_padded = x_padded* (1 + scale) + shift#B,P_max,D,T
+            x_padded = self.out_layers(x_padded)
+            x_padded=self.norm(x_padded)#B,P_max,D,T
             
-            x_clone=x.clone().transpose(1,2).flatten(-2)#B,D,PT
-            shift2=self.global_emb_layers(x_clone)#B,D,PT
+            # Apply padding mask
+            if padding_mask is not None:
+                mask = padding_mask.view(b, self.max_p, 1, 1)
+                x_padded = x_padded * mask
+            
+            x_clone=x_padded.clone().transpose(1,2).flatten(-2)#B,D,P_max*T
+            shift2=self.global_emb_layers(x_clone)#B,D,P_max*T
             x_global=x_global+shift2
             x_global=self.norm_global(x_global)
         else:#同步更新，用更新前的x更新x_global
-            x_clone=x.clone().transpose(1,2).flatten(-2)#B,D,PT
-            x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,PT
+            x_clone=x_padded.clone().transpose(1,2).flatten(-2)#B,D,P_max*T
+            x_global_clone=x_global.clone().unsqueeze(1)#B,1,D,P_max*T
             
             x_global_clone = self.emb_layers(x_global_clone)#b,1,d,2t
             # scale: B,1, d, t / shift: B,1, d, t
             scale, shift = torch.chunk(x_global_clone, 2, dim=-1)
-            x = x* (1 + scale) + shift#B,P,D,T
-            x = self.out_layers(x)
+            x_padded = x_padded* (1 + scale) + shift#B,P_max,D,T
+            x_padded = self.out_layers(x_padded)
             
-            distances=self.dis_linear(distances)#B,T,P,D
-            distances1=distances.permute(0,2,3,1)#B,P,D,T
-            # distances1=self.temp_norm(distances1)
-            distances1=self.temp_linear(distances1)#B,P,D,T
-            # scale_temp,shift_temp=torch.chunk(distances1,2,dim=-1)
-            # x=x*(1+scale_temp)+shift_temp
-            # x=self.out_layers_temp(x)   
-            x=x+distances1
-            x=self.norm(x)#B,P,D,T
+            if distances_padded.dim() == 4 and distances_padded.shape[1] == t:  # B,T,P,D
+                distances_processed=self.dis_linear(distances_padded.transpose(2, 3))#B,T,D,P_max
+                distances1=distances_processed.permute(0,3,2,1)#B,P_max,D,T
+            else:  # B,P,1,T
+                distances_processed=self.dis_linear(distances_padded.transpose(1,3))#B,T,D,P_max
+                distances1=distances_processed.permute(0,3,2,1)#B,P_max,D,T
             
-            shift2=self.global_emb_layers(x_clone)#B,D,PT
+            distances1=self.temp_linear(distances1)#B,P_max,D,T
+            x_padded=x_padded+distances1
+            
+            # Apply padding mask
+            if padding_mask is not None:
+                mask = padding_mask.view(b, self.max_p, 1, 1)
+                x_padded = x_padded * mask
+                
+            x_padded=self.norm(x_padded)#B,P_max,D,T
+            
+            shift2=self.global_emb_layers(x_clone)#B,D,P_max*T
             x_global=x_global+shift2
-            
-            # distances_for_global=distances.transpose(1,2).flatten(-2)#B,1,P*T
-            # distances2=self.temp_linear2(distances_for_global)#B,1,P*T
-            # x_global=x_global+distances2#B,D,PT
-            
             x_global=self.norm_global(x_global)
             
-        return x,x_global
+        # Extract only valid persons
+        x_out = x_padded[:, :p, :, :]
+        return x_out, x_global
     
 class TransMLP(nn.Module):
-    def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis,num_global_layers=4,interaction_interval=4,p=3):
+    def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis,num_global_layers=4,interaction_interval=4,p=3,max_p=None):
         super().__init__()
+        # Use max_p if provided, otherwise use p for backward compatibility
+        effective_p = max_p if max_p is not None else p
+        self.p = p
+        self.max_p = effective_p
+        
         self.local_mlps = nn.Sequential(*[
             MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_layers)])
         self.global_mlps=nn.Sequential(*[
-            MLPblock(dim, seq*p, use_norm, use_spatial_fc, layernorm_axis)
+            MLPblock(dim, seq*effective_p, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_global_layers)])
         self.stylization_blocks = nn.ModuleList([
-            StylizationBlock(seq, p,dim) for _ in range(interaction_interval)
+            StylizationBlock(seq, p, dim, max_p=effective_p) for _ in range(interaction_interval)
         ])
         self.interaction_interval=interaction_interval
         self.num_layers=num_layers
         self.a=self.num_layers//self.interaction_interval
         self.b=num_global_layers//interaction_interval
-    def forward(self, x,distances):#distances:B,T,P,P
+    def forward(self, x,distances, padding_mask=None):#distances:B,T,P,P, padding_mask: B,P
         b,p,d,t=x.shape
+        
+        # Create padding mask if not provided
+        if padding_mask is None:
+            padding_mask = torch.ones(b, p, device=x.device)
+        
+        # Pad x and padding_mask to max_p if needed
+        if p < self.max_p:
+            pad_size = self.max_p - p
+            x_padded = torch.cat([x, torch.zeros(b, pad_size, d, t, device=x.device)], dim=1)
+            padding_mask_padded = torch.cat([padding_mask, torch.zeros(b, pad_size, device=x.device)], dim=1)
+        else:
+            x_padded = x
+            padding_mask_padded = padding_mask
+            
         # 初始化 x_global 与 x 一样
-        x_global = x.clone().transpose(1,2).flatten(-2)#B,D,PT
+        x_global = x_padded.clone().transpose(1,2).flatten(-2)#B,D,P_max*T
         
         for j in range(self.interaction_interval):
             # 逐层进行local和global的交互
             for i, local_layer in enumerate(self.local_mlps[self.a*j:self.a*j+self.a]):
-                x = local_layer(x)  # 计算 local MLP
+                # Only apply local layer to actual persons
+                x_temp = x_padded[:, :p, :, :]
+                x_temp = local_layer(x_temp)  # 计算 local MLP
+                x_padded = torch.cat([x_temp, x_padded[:, p:, :, :]], dim=1)
+                
             for i, global_layer in enumerate(self.global_mlps[self.b*j:self.b*j+self.b]):
                 x_global = global_layer(x_global)  # 计算 global MLP
                             
-            x_new, x_global_new = self.stylization_blocks[j](x, x_global,distances)  # 使用 StylizationBlock 进行交互
-            x=x+x_new
+            x_new, x_global_new = self.stylization_blocks[j](x_padded[:, :p, :, :], x_global, distances, padding_mask)  # 使用 StylizationBlock 进行交互
+            # Update only actual persons
+            x_padded_temp = x_padded.clone()
+            x_padded_temp[:, :p, :, :] = x_padded[:, :p, :, :] + x_new
+            x_padded = x_padded_temp
             x_global=x_global+x_global_new
                     
-        # return x+0.2*x_global.reshape(b,d,p,t).transpose(1,2)
-        return x
+        # Return only valid persons
+        return x_padded[:, :p, :, :]
 
 def build_mlps(args):
     if 'seq_len' in args:
         seq_len = args.seq_len
     else:
         seq_len = None
+    
+    # Support variable person count with max_p parameter
+    max_p = getattr(args, 'max_p', None)
+    
     return TransMLP(
         dim=args.hidden_dim,
         seq=seq_len,
@@ -238,6 +313,7 @@ def build_mlps(args):
         num_global_layers=args.num_global_layers,
         interaction_interval=args.interaction_interval,
         p=args.n_p,
+        max_p=max_p,
     )
 
 

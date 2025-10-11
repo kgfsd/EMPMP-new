@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from einops.layers.torch import Rearrange
+from .gcn import DynamicGCN
 
 class LN(nn.Module):
     def __init__(self, dim, epsilon=1e-5):
@@ -230,6 +231,69 @@ class StylizationBlock(nn.Module):
             x_global=self.norm_global(x_global)
             
         return x,x_global
+
+
+class GCNStylizationBlock(nn.Module):
+    """
+    Enhanced StylizationBlock with GCN for handling variable numbers of people.
+    Uses dynamic graph construction based on Euclidean distances.
+    """
+    def __init__(self, time_dim, num_p, dim, k_neighbors=None, gcn_layers=2):
+        super().__init__()
+        # Original stylization components
+        self.emb_layers = nn.Sequential(
+            nn.Linear(time_dim*num_p, 2 * time_dim),
+        )
+        self.norm = LN(dim)
+        self.norm_global = LN(dim)
+        self.out_layers = nn.Sequential(
+            zero_module(nn.Linear(time_dim, time_dim)),
+        )
+        self.global_emb_layers = nn.Sequential(
+            nn.Linear(time_dim*num_p, time_dim*num_p),
+        )
+        
+        # GCN for modeling spatial relationships
+        self.gcn = DynamicGCN(
+            dim=dim,
+            num_layers=gcn_layers,
+            k_neighbors=k_neighbors if k_neighbors is not None else num_p - 1,
+            distance_threshold=None
+        )
+        
+        # Linear layer to blend GCN output
+        self.gcn_blend = nn.Linear(dim, dim)
+        
+    def forward(self, x, x_global, distances):
+        """
+        x: B, P, D, T
+        x_global: B, D, PT
+        distances: B, T, P, P
+        """
+        # Apply GCN to capture spatial relationships between people
+        x_gcn = self.gcn(x, distances)  # [B, P, D, T]
+        x_gcn = self.gcn_blend(x_gcn.transpose(-2, -1)).transpose(-2, -1)  # Blend GCN output
+        
+        # Original stylization logic
+        x_clone = x.clone().transpose(1, 2).flatten(-2)  # B, D, PT
+        x_global_clone = x_global.clone().unsqueeze(1)  # B, 1, D, PT
+        
+        x_global_clone = self.emb_layers(x_global_clone)  # b, 1, d, 2t
+        scale, shift = torch.chunk(x_global_clone, 2, dim=-1)
+        x = x * (1 + scale) + shift  # B, P, D, T
+        x = self.out_layers(x)
+        
+        # Integrate GCN output
+        x = x + x_gcn
+        x = self.norm(x)  # B, P, D, T
+        
+        # Update global features
+        shift2 = self.global_emb_layers(x_clone)  # B, D, PT
+        x_global = x_global + shift2
+        x_global = self.norm_global(x_global)
+        
+        return x, x_global
+
     
 class TransMLP(nn.Module):
     def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis,interaction_interval=2,p=3):
@@ -268,21 +332,90 @@ class TransMLP(nn.Module):
         
         return x
 
+
+class TransMLPWithGCN(nn.Module):
+    """
+    Enhanced TransMLP with GCN-based global flow module.
+    Supports variable numbers of people through dynamic graph construction.
+    """
+    def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis, 
+                 interaction_interval=2, p=3, k_neighbors=None, gcn_layers=2):
+        super().__init__()
+        self.local_mlps = nn.Sequential(*[
+            MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
+            for i in range(num_layers)])
+        self.global_mlps = nn.Sequential(*[
+            MLPblock(dim, seq*p, use_norm, use_spatial_fc, layernorm_axis)
+            for i in range(num_layers//interaction_interval)])
+        
+        # Use GCN-based stylization blocks
+        self.stylization_blocks = nn.ModuleList([
+            GCNStylizationBlock(seq, p, dim, k_neighbors=k_neighbors, gcn_layers=gcn_layers)
+            for _ in range(num_layers//interaction_interval)
+        ])
+        self.interaction_interval = interaction_interval
+        
+    def forward(self, x, distances):
+        """
+        x: [B, P, D, T] - local features
+        distances: [B, T, P, P] - pairwise distances
+        """
+        b, p, d, t = x.shape
+        # Initialize x_global
+        x_global = x.clone().transpose(1, 2).flatten(-2)  # B, D, PT
+        global_step = 0
+        
+        # Process layers with periodic global interactions
+        for i, local_layer in enumerate(self.local_mlps):
+            x = local_layer(x)
+            
+            if (i + 1) % self.interaction_interval == 0 and global_step < len(self.global_mlps):
+                x_global = self.global_mlps[global_step](x_global)
+                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global, distances)
+                
+                x = x + x_new
+                x_global = x_global + x_global_new
+                
+                global_step += 1
+        
+        return x
+
+
 def build_mlps(args):
     if 'seq_len' in args:
         seq_len = args.seq_len
     else:
         seq_len = None
-    return TransMLP(
-        dim=args.hidden_dim,
-        seq=seq_len,
-        use_norm=args.with_normalization,
-        use_spatial_fc=args.spatial_fc_only,
-        num_layers=args.num_layers,
-        layernorm_axis=args.norm_axis,
-        interaction_interval=args.interaction_interval,
-        p=args.n_p,
-    )
+    
+    # Check if GCN-based approach should be used
+    use_gcn = getattr(args, 'use_gcn', False)
+    
+    if use_gcn:
+        k_neighbors = getattr(args, 'k_neighbors', None)
+        gcn_layers = getattr(args, 'gcn_layers', 2)
+        return TransMLPWithGCN(
+            dim=args.hidden_dim,
+            seq=seq_len,
+            use_norm=args.with_normalization,
+            use_spatial_fc=args.spatial_fc_only,
+            num_layers=args.num_layers,
+            layernorm_axis=args.norm_axis,
+            interaction_interval=args.interaction_interval,
+            p=args.n_p,
+            k_neighbors=k_neighbors,
+            gcn_layers=gcn_layers,
+        )
+    else:
+        return TransMLP(
+            dim=args.hidden_dim,
+            seq=seq_len,
+            use_norm=args.with_normalization,
+            use_spatial_fc=args.spatial_fc_only,
+            num_layers=args.num_layers,
+            layernorm_axis=args.norm_axis,
+            interaction_interval=args.interaction_interval,
+            p=args.n_p,
+        )
 
 
 def _get_activation_fn(activation):

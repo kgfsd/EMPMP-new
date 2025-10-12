@@ -89,14 +89,34 @@ def dataloader_for_mine(dataset, config, **kwargs):
                       **kwargs)
 def collate_batch_mine(batch):
     """
-    将每个batch中的样本合并成一个张量。
+    将每个batch中的样本合并成一个张量，支持动态人数。
     :param batch: list of samples, each sample is a tensor from TensorDataset
-    :return: batched tensor
+    :return: batched tensor with proper padding mask
     """
-    # 将所有的样本堆叠在一起
-    batch=torch.stack([sample[0] for sample in batch])
-    padding_mask = torch.ones(batch.size(0), batch.size(1))
-    return batch,None, padding_mask
+    # 获取每个样本中的最大人数
+    max_people = max(sample[0].size(0) for sample in batch)
+    batch_size = len(batch)
+    
+    # 获取其他维度信息
+    time_dim = batch[0][0].size(1)
+    joint_dim = batch[0][0].size(2)
+    coord_dim = batch[0][0].size(3)
+    
+    # 创建填充后的batch
+    padded_batch = torch.zeros(batch_size, max_people, time_dim, joint_dim, coord_dim)
+    padding_mask = torch.zeros(batch_size, max_people, dtype=torch.bool)
+    
+    # 填充数据并创建mask
+    for i, sample in enumerate(batch):
+        data = sample[0]  # shape: [P, T, J, 3]
+        actual_people = data.size(0)
+        
+        # 复制实际数据
+        padded_batch[i, :actual_people] = data
+        # 设置mask：True表示真实数据，False表示填充数据
+        padding_mask[i, :actual_people] = True
+        
+    return padded_batch, None, padding_mask
 def get_3dpw_dataloader(split,cfg,shuffle,batch_size=None):
     
     if split=="train":

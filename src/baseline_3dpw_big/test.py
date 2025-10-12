@@ -353,16 +353,26 @@ def mpjpe_vim_test(config, model, eval_generator,is_mocap,select_vim_frames=[1, 
     fde_res=[]
     
     model.eval()
+    
+    # 统计测试数据的人数分布
+    total_batches = 0
+    total_people_counts = []
 
     for (joints, masks, padding_mask) in eval_generator:
+        # 统计当前批次的人数信息
+        batch_people_counts = padding_mask.sum(dim=1).cpu().numpy()
+        total_people_counts.extend(batch_people_counts)
+        total_batches += 1
+        
         h36m_motion_input=joints[:,:,:config.t_his].flatten(-2)#16
         h36m_motion_target=joints[:,:,config.t_his:].flatten(-2)#14
         
         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
+        padding_mask = padding_mask.to(device)  # 确保 padding_mask 在正确的设备上
         if config.rc:
             h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
-        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target,padding_mask=padding_mask)
     
         cal_vim(motion_pred,h36m_motion_target,vim_avg)
         loss1,loss2,loss3=cal_mpjpe(motion_pred,h36m_motion_target,is_mocap=is_mocap,select_frames=select_mpjpe_frames)
@@ -391,6 +401,14 @@ def mpjpe_vim_test(config, model, eval_generator,is_mocap,select_vim_frames=[1, 
     
     fde_res=np.array(fde_res)
     fde_res=np.mean(fde_res,axis=0)
+    
+    # 输出测试数据的人数统计信息
+    total_people_counts = np.array(total_people_counts)
+    print(f"Test data people stats - Total batches: {total_batches}, Total samples: {len(total_people_counts)}")
+    print(f"People distribution - Min: {total_people_counts.min()}, Max: {total_people_counts.max()}, Avg: {total_people_counts.mean():.1f}")
+    unique, counts = np.unique(total_people_counts, return_counts=True)
+    print(f"People count distribution: {dict(zip(unique, counts))}")
+    
     return mpjpe_res,vim_avg.avg[select_vim_frames]/1.8 if is_mocap else vim_avg.avg[select_vim_frames],jpe_res,ape_res,fde_res
 
 def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select_frames=[1, 3, 7, 9, 13]):    

@@ -241,16 +241,14 @@ class GCNStylizationBlock(nn.Module):
     def __init__(self, time_dim, num_p, dim, k_neighbors=None, distance_threshold=None, gcn_layers=2):
         super().__init__()
         # Original stylization components
-        self.emb_layers = nn.Sequential(
-            nn.Linear(time_dim*num_p, 2 * time_dim),
-        )
+        self.time_dim = time_dim
+        self.num_p = num_p
+        self.dim = dim
+        
         self.norm = LN(dim)
         self.norm_global = LN(dim)
         self.out_layers = nn.Sequential(
             zero_module(nn.Linear(time_dim, time_dim)),
-        )
-        self.global_emb_layers = nn.Sequential(
-            nn.Linear(time_dim*num_p, time_dim*num_p),
         )
         
         # GCN for modeling spatial relationships
@@ -264,31 +262,70 @@ class GCNStylizationBlock(nn.Module):
         # Linear layer to blend GCN output
         self.gcn_blend = nn.Linear(dim, dim)
         
-    def forward(self, x, x_global, distances):
+        # Cache for dynamic layers
+        self._emb_layer_cache = {}
+        self._global_emb_layer_cache = {}
+        
+    def _get_emb_layer(self, seq_len):
+        """动态创建或获取嵌入层"""
+        if seq_len not in self._emb_layer_cache:
+            self._emb_layer_cache[seq_len] = nn.Sequential(
+                nn.Linear(seq_len, 2 * self.time_dim),
+            ).to(next(self.parameters()).device)
+        return self._emb_layer_cache[seq_len]
+    
+    def _get_global_emb_layer(self, seq_len):
+        """动态创建或获取全局嵌入层"""
+        if seq_len not in self._global_emb_layer_cache:
+            self._global_emb_layer_cache[seq_len] = nn.Sequential(
+                nn.Linear(seq_len, seq_len),
+            ).to(next(self.parameters()).device)
+        return self._global_emb_layer_cache[seq_len]
+        
+    def forward(self, x, x_global, distances, padding_mask=None):
         """
-        x: B, P, D, T
-        x_global: B, D, PT
-        distances: B, T, P, P
+        x: B, P, D, T - 只包含有效的人
+        x_global: B, D, PT - 对应有效人数的全局特征
+        distances: B, T, P_total, P_total - 完整的距离矩阵
+        padding_mask: B, P_total - 完整的 mask
         """
+        b, p_actual, d, t = x.shape  # p_actual 是实际的人数
+        
         # Apply GCN to capture spatial relationships between people
-        x_gcn = self.gcn(x, distances)  # [B, P, D, T]
+        # 我们需要从完整的距离矩阵中提取有效部分
+        if padding_mask is not None:
+            # 构建一个只包含有效人员的 mask
+            valid_mask = padding_mask[:, :p_actual]  # [B, P_actual]
+        else:
+            valid_mask = None
+            
+        # 提取有效距离矩阵
+        distances_valid = distances[:, :, :p_actual, :p_actual]  # [B, T, P_actual, P_actual]
+        
+        x_gcn = self.gcn(x, distances_valid, valid_mask)  # [B, P_actual, D, T]
         x_gcn = self.gcn_blend(x_gcn.transpose(-2, -1)).transpose(-2, -1)  # Blend GCN output
         
         # Original stylization logic
-        x_clone = x.clone().transpose(1, 2).flatten(-2)  # B, D, PT
-        x_global_clone = x_global.clone().unsqueeze(1)  # B, 1, D, PT
+        x_clone = x.clone().transpose(1, 2).flatten(-2)  # B, D, P_actual*T
+        seq_len = p_actual * t
         
-        x_global_clone = self.emb_layers(x_global_clone)  # b, 1, d, 2t
+        # 动态获取嵌入层
+        emb_layer = self._get_emb_layer(seq_len)
+        global_emb_layer = self._get_global_emb_layer(seq_len)
+        
+        x_global_clone = x_global.clone().unsqueeze(1)  # B, 1, D, P_actual*T
+        
+        x_global_clone = emb_layer(x_global_clone)  # b, 1, d, 2*time_dim
         scale, shift = torch.chunk(x_global_clone, 2, dim=-1)
-        x = x * (1 + scale) + shift  # B, P, D, T
+        x = x * (1 + scale) + shift  # B, P_actual, D, T
         x = self.out_layers(x)
         
         # Integrate GCN output
         x = x + x_gcn
-        x = self.norm(x)  # B, P, D, T
+        x = self.norm(x)  # B, P_actual, D, T
         
         # Update global features
-        shift2 = self.global_emb_layers(x_clone)  # B, D, PT
+        shift2 = global_emb_layer(x_clone)  # B, D, P_actual*T
         x_global = x_global + shift2
         x_global = self.norm_global(x_global)
         
@@ -301,6 +338,7 @@ class TransMLP(nn.Module):
         self.local_mlps = nn.Sequential(*[
             MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_layers)])
+        # 动态全局 MLP - 保持原有固定维度的行为
         self.global_mlps=nn.Sequential(*[
             MLPblock(dim, seq*p, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_layers//interaction_interval)])
@@ -308,7 +346,7 @@ class TransMLP(nn.Module):
             StylizationBlock(seq, p,dim) for _ in range(num_layers//interaction_interval)
         ])
         self.interaction_interval=interaction_interval
-    def forward(self, x,distances):#distances:B,T,P,P
+    def forward(self, x, distances, padding_mask=None):#distances:B,T,P,P
         b,p,d,t=x.shape
         # 初始化 x_global 与 x 一样
         x_global = x.clone().transpose(1,2).flatten(-2)#B,D,PT
@@ -323,7 +361,7 @@ class TransMLP(nn.Module):
             # 每经过 interaction_interval 层 local_mlp，执行一次 global_mlp 的更新和交互
             if (i + 1) % self.interaction_interval == 0 and global_step < len(self.global_mlps):
                 x_global = self.global_mlps[global_step](x_global)  # 动态计算 global MLP
-                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global,distances)  # 使用 StylizationBlock 进行交互
+                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global, distances)  # 使用 StylizationBlock 进行交互
                 
                 x=x+x_new
                 x_global=x_global+x_global_new
@@ -344,9 +382,15 @@ class TransMLPWithGCN(nn.Module):
         self.local_mlps = nn.Sequential(*[
             MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
             for i in range(num_layers)])
-        self.global_mlps = nn.Sequential(*[
-            MLPblock(dim, seq*p, use_norm, use_spatial_fc, layernorm_axis)
-            for i in range(num_layers//interaction_interval)])
+        
+        # 动态全局 MLP - 不预定义维度
+        self.num_global_layers = num_layers // interaction_interval
+        self.global_layer_config = {
+            'dim': dim,
+            'use_norm': use_norm,
+            'use_spatial_fc': use_spatial_fc,
+            'layernorm_axis': layernorm_axis
+        }
         
         # Use GCN-based stylization blocks
         self.stylization_blocks = nn.ModuleList([
@@ -354,26 +398,63 @@ class TransMLPWithGCN(nn.Module):
             for _ in range(num_layers//interaction_interval)
         ])
         self.interaction_interval = interaction_interval
+        self.seq = seq
         
-    def forward(self, x, distances):
+        # Cache for dynamic global MLPs
+        self._global_mlp_cache = {}
+        
+    def _get_global_mlp(self, seq_len):
+        """动态创建或获取全局 MLP"""
+        if seq_len not in self._global_mlp_cache:
+            self._global_mlp_cache[seq_len] = nn.Sequential(*[
+                MLPblock(
+                    self.global_layer_config['dim'], 
+                    seq_len, 
+                    self.global_layer_config['use_norm'], 
+                    self.global_layer_config['use_spatial_fc'], 
+                    self.global_layer_config['layernorm_axis']
+                )
+                for _ in range(self.num_global_layers)
+            ]).to(next(self.parameters()).device)
+        return self._global_mlp_cache[seq_len]
+        
+    def forward(self, x, distances, padding_mask=None):
         """
         x: [B, P, D, T] - local features
         distances: [B, T, P, P] - pairwise distances
+        padding_mask: [B, P] - bool mask indicating real people
         """
         b, p, d, t = x.shape
-        # Initialize x_global
-        x_global = x.clone().transpose(1, 2).flatten(-2)  # B, D, PT
+        
+        # 计算有效人数
+        if padding_mask is not None:
+            actual_people = padding_mask.sum(dim=1).max().item()  # 批次中的最大人数
+        else:
+            actual_people = p
+        
+        # Initialize x_global with actual dimensions
+        x_global = x[:, :actual_people].clone().transpose(1, 2).flatten(-2)  # B, D, actual_P*T
+        actual_seq_len = actual_people * t
+        
+        # Get or create global MLP for current sequence length
+        global_mlps = self._get_global_mlp(actual_seq_len)
         global_step = 0
         
         # Process layers with periodic global interactions
         for i, local_layer in enumerate(self.local_mlps):
             x = local_layer(x)
             
-            if (i + 1) % self.interaction_interval == 0 and global_step < len(self.global_mlps):
-                x_global = self.global_mlps[global_step](x_global)
-                x_new, x_global_new = self.stylization_blocks[global_step](x, x_global, distances)
+            if (i + 1) % self.interaction_interval == 0 and global_step < len(global_mlps):
+                x_global = global_mlps[global_step](x_global)
                 
-                x = x + x_new
+                # 对于 stylization，我们需要处理维度匹配
+                x_current = x[:, :actual_people]  # 只处理有效的人
+                x_new, x_global_new = self.stylization_blocks[global_step](x_current, x_global, distances, padding_mask)
+                
+                # 更新有效部分 - 避免就地操作
+                x_updated = x.clone()
+                x_updated[:, :actual_people] = x_current + x_new
+                x = x_updated
                 x_global = x_global + x_global_new
                 
                 global_step += 1

@@ -55,13 +55,13 @@ C.dct_len=16
 if C.dct_len >C.t_his:
     C.dct_len=C.t_his
 C.t_pred_eval=14
-C.n_joint=13
+C.n_joint=13  # 更新为混合数据集的关节数
 
 C.motion.h36m_input_length = C.t_his
 C.motion.h36m_input_length_dct = C.dct_len
 C.motion.h36m_target_length_train = C.t_pred
 C.motion.h36m_target_length_eval = C.t_pred_eval
-C.motion.dim = 39
+C.motion.dim = 39  # 更新为15关节 * 3坐标 = 45维
 
 
 C.data_aug = True
@@ -82,7 +82,8 @@ C.motion_mlp.num_layers = 48
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
-C.motion_mlp.p=3
+C.motion_mlp.n_p = 3
+C.motion_mlp.interaction_interval = 16
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim
@@ -106,12 +107,12 @@ C.gcn_layers = 2           # 2 GCN layers per block
 """Train Config"""
 C.epoch=100
 C.vis_every=500
-C.batch_size = 256
-C.num_workers = 8
+C.batch_size = 128
+C.num_workers = 4
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=5000
+C.cos_lr_total_iters=2000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None
@@ -135,6 +136,8 @@ C.segmented=False
 C.aug_rotate=True
 C.aug_scale=False
 C.aug_permute=True
+
+C.use_mixed_people_dataset = True  # 是否使用混合人数数据集
 
 if __name__ == '__main__':
     print(config.decoder.motion_mlp)

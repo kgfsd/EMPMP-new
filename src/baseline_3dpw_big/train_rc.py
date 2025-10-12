@@ -31,6 +31,9 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from src.baseline_3dpw_big.test import vim_test, random_pred, mpjpe_vim_test
 
+# 添加混合人数数据集支持
+from test_mixed_people import MixedPeopleDataset, collate_mixed_batch
+
 # Ignore all warnings
 warnings.filterwarnings("ignore")
 
@@ -89,6 +92,25 @@ def write(metric_name, metric_val, iter, llog):
 
 def train_step(h36m_motion_input, h36m_motion_target, padding_mask, model, optimizer, nb_iter, total_iter, max_lr,
                min_lr, writer_obj):
+    global latest_people_stats
+    
+    # 计算并显示当前批次的实际人数信息
+    batch_size = padding_mask.shape[0]
+    actual_people_counts = padding_mask.sum(dim=1).cpu().numpy()  # 每个样本的实际人数
+    max_people_in_batch = actual_people_counts.max()
+    min_people_in_batch = actual_people_counts.min()
+    avg_people_in_batch = actual_people_counts.mean()
+    
+    # 更新全局统计信息
+    latest_people_stats['min'] = min_people_in_batch
+    latest_people_stats['max'] = max_people_in_batch
+    latest_people_stats['avg'] = avg_people_in_batch
+    latest_people_stats['counts'] = actual_people_counts.tolist()
+    
+    # 每100个iteration输出一次人数信息
+    if nb_iter % 100 == 0:
+        print(f"Batch people info - Min: {min_people_in_batch}, Max: {max_people_in_batch}, Avg: {avg_people_in_batch:.1f}")
+    
     if args.random_rotate:
         h36m_motion_input, h36m_motion_target = getRandomRotatePoseTransform(h36m_motion_input, h36m_motion_target)
     if args.permute_p:
@@ -96,17 +118,22 @@ def train_step(h36m_motion_input, h36m_motion_target, padding_mask, model, optim
     if config.rc:
         h36m_motion_input, h36m_motion_target = Get_RC_Data(h36m_motion_input, h36m_motion_target)
 
-    motion_pred = predict(model, h36m_motion_input, config, h36m_motion_target)  # b,p,n,c
+    motion_pred = predict(model, h36m_motion_input, config, h36m_motion_target, padding_mask)  # b,p,n,c
     b, p, n, c = h36m_motion_target.shape
 
     # Predicted pose
     motion_pred = motion_pred.reshape(b, p, n, config.n_joint, 3).reshape(-1, 3)
     # GT
     h36m_motion_target = h36m_motion_target.to(config.device).reshape(b, p, n, config.n_joint, 3).reshape(-1, 3)
-    # mask:b,p
+    # mask:b,p -> expanded to cover all joints and frames
     expanded_mask = padding_mask.unsqueeze(-1).repeat(1, 1, n * config.n_joint).reshape(-1)
-    # Calculate loss
-    loss = torch.mean(torch.norm(motion_pred - h36m_motion_target, dim=1)[expanded_mask])
+    
+    # Calculate loss only for valid (non-padded) people
+    valid_errors = torch.norm(motion_pred - h36m_motion_target, dim=1)
+    if expanded_mask.sum() > 0:  # Ensure there are valid people
+        loss = torch.mean(valid_errors[expanded_mask])
+    else:
+        loss = torch.tensor(0.0, device=motion_pred.device, requires_grad=True)
 
     if config.use_relative_loss:
         motion_pred = motion_pred.reshape(b, p, n, config.n_joint, 3)
@@ -115,11 +142,14 @@ def train_step(h36m_motion_input, h36m_motion_target, padding_mask, model, optim
         motion_gt = h36m_motion_target.reshape(b, p, n, config.n_joint, 3)
         dmotion_gt = gen_velocity(motion_gt)  # Calculate velocity
 
-        expanded_mask = padding_mask.unsqueeze(-1).repeat(1, 1, (n - 1) * config.n_joint).reshape(-1)
-        dloss = torch.mean(torch.norm((dmotion_pred - dmotion_gt).reshape(-1, 3), dim=1)[expanded_mask])
+        # Mask for velocity (one less frame in time dimension)
+        expanded_mask_vel = padding_mask.unsqueeze(-1).repeat(1, 1, (n - 1) * config.n_joint).reshape(-1)
+        valid_vel_errors = torch.norm((dmotion_pred - dmotion_gt).reshape(-1, 3), dim=1)
+        if expanded_mask_vel.sum() > 0:  # Ensure there are valid velocity samples
+            dloss = torch.mean(valid_vel_errors[expanded_mask_vel])
+        else:
+            dloss = torch.tensor(0.0, device=motion_pred.device, requires_grad=True)
         loss = loss + dloss
-    else:
-        loss = loss.mean()
 
     writer_obj.add_scalar('Loss/angle', loss.detach().cpu().numpy(), nb_iter)
 
@@ -169,6 +199,14 @@ args = parser.parse_args()
 
 # expr_dir definition (can be outside, as it's just a path string)
 expr_dir = os.path.join('exprs', args.exp_name)
+
+# Global variables to store latest batch people info
+latest_people_stats = {
+    'min': 0,
+    'max': 0,
+    'avg': 0.0,
+    'counts': []
+}
 
 # ==============================================================================
 # All main execution logic MUST be placed inside the if __name__ == '__main__': block
@@ -291,17 +329,50 @@ if __name__ == '__main__':
         config.dct_m = dct_m
         config.idct_m = idct_m
 
+        # DataLoader instantiation MUST be inside if __name__ == '__main__':
+        if hasattr(config, 'use_mixed_people_dataset') and config.use_mixed_people_dataset:
+            config.n_joint = 15  # Ensure n_joint matches MixedPeopleDataset
+            config.motion.dim = config.n_joint * 3  # Update motion dim accordingly
+            print(" Using Mixed People Dataset for true dynamic people count!")
+            data_dir = os.path.join(config.root_dir, 'data')
+            mixed_dataset_train = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='train')
+            mixed_dataset_test = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='test')
+            
+            dataloader_train = torch.utils.data.DataLoader(
+                mixed_dataset_train, 
+                batch_size=config.batch_size, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=config.num_workers
+            )
+            dataloader_test = torch.utils.data.DataLoader(
+                mixed_dataset_test, 
+                batch_size=config.batch_size, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=config.num_workers
+            )
+            dataloader_test_sample = torch.utils.data.DataLoader(
+                mixed_dataset_test, 
+                batch_size=1, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=0
+            )
+        else:
+            config.n_joint = 13  # Ensure n_joint matches 3DPW dataset
+            config.motion.dim = config.n_joint * 3  # Update motion dim accordingly
+            print("Using standard 3DPW dataset")
+            dataloader_train = get_3dpw_dataloader(split="train", cfg=config, shuffle=True)
+            dataloader_test = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True)
+            dataloader_test_sample = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True, batch_size=1)
+        random_iter = iter(dataloader_test_sample)
+
         # Create model
         model = Model(config).to(device=config.device)
         model.train()
         print(">>> total params: {:.2f}M".format(
             sum(p.numel() for p in list(model.parameters())) / 1000000.0))
-
-        # DataLoader instantiation MUST be inside if __name__ == '__main__':
-        dataloader_train = get_3dpw_dataloader(split="train", cfg=config, shuffle=True)
-        dataloader_test = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True)
-        dataloader_test_sample = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True, batch_size=1)
-        random_iter = iter(dataloader_test_sample)
 
         # Initialize optimizer
         optimizer = torch.optim.Adam(model.parameters(),
@@ -333,7 +404,13 @@ if __name__ == '__main__':
             print(f"{nb_iter + 1} / {config.cos_lr_total_iters}")
 
             for (joints, masks, padding_mask) in dataloader_train:
-                # B,P,T,JK
+                # 调试：打印数据格式
+                if nb_iter == 0:
+                    print(f"DEBUG: joints type: {type(joints)}, shape: {joints.shape if hasattr(joints, 'shape') else 'No shape'}")
+                    print(f"DEBUG: masks type: {type(masks)}")
+                    print(f"DEBUG: padding_mask type: {type(padding_mask)}, shape: {padding_mask.shape if hasattr(padding_mask, 'shape') else 'No shape'}")
+                  
+                # B,P,T,J,3 -> B,P,T,JK
                 h36m_motion_input = joints[:, :, :config.t_his].flatten(-2)  # 16
                 h36m_motion_target = joints[:, :, config.t_his:].flatten(-2)  # 14
 
@@ -368,6 +445,11 @@ if __name__ == '__main__':
                         model.eval()
 
                         print("begin test")
+                        print(f"Iteration: {nb_iter + 1} / {config.cos_lr_total_iters}")
+                        
+                        # 输出最近一批训练数据的人数统计信息
+                        if latest_people_stats['counts']:
+                            print(f"Latest batch people stats - Min: {latest_people_stats['min']}, Max: {latest_people_stats['max']}, Avg: {latest_people_stats['avg']:.1f}")
 
                         mpjpe, vim, jpe, ape, fde = mpjpe_vim_test(config, model, dataloader_test, is_mocap=False,
                                                                    select_vim_frames=[1, 3, 7, 9, 13],

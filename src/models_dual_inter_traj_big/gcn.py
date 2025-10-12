@@ -20,10 +20,11 @@ class DynamicGraphConstruction(nn.Module):
         self.distance_threshold = distance_threshold
         self.self_loop = self_loop
         
-    def forward(self, distances):
+    def forward(self, distances, padding_mask=None):
         """
         Args:
             distances: [B, T, P, P] - pairwise Euclidean distances between people
+            padding_mask: [B, P] - bool mask indicating real people (True) vs padded (False)
             
         Returns:
             adjacency: [B, T, P, P] - binary or weighted adjacency matrix
@@ -34,58 +35,100 @@ class DynamicGraphConstruction(nn.Module):
         # Initialize adjacency matrix
         adjacency = torch.zeros_like(distances)
         
+        # Create mask for valid connections (both people must be real)
+        if padding_mask is not None:
+            # padding_mask: [B, P] -> [B, 1, P, P]
+            valid_mask = padding_mask.unsqueeze(1) & padding_mask.unsqueeze(2)  # [B, P, P]
+            valid_mask = valid_mask.unsqueeze(1).expand(-1, T, -1, -1)  # [B, T, P, P]
+        else:
+            valid_mask = torch.ones_like(distances, dtype=torch.bool)
+        
         if self.k_neighbors is not None:
             # K-nearest neighbors approach
-            # For each person, connect to k nearest neighbors
-            k = min(self.k_neighbors, P - 1)  # Can't have more neighbors than people-1
-            if k > 0:
-                # Get k smallest distances (excluding self)
-                # Set diagonal to infinity to exclude self-connections
-                dist_masked = distances.clone()
-                dist_masked = dist_masked + torch.eye(P, device=distances.device).unsqueeze(0).unsqueeze(0) * 1e10
-                
-                # Get k nearest neighbors
-                _, indices = torch.topk(dist_masked, k, dim=-1, largest=False)
-                
-                # Create adjacency matrix
-                for b in range(B):
-                    for t in range(T):
-                        for p in range(P):
-                            adjacency[b, t, p, indices[b, t, p]] = 1.0
+            for b in range(B):
+                # Get number of actual people in this batch
+                if padding_mask is not None:
+                    actual_people = padding_mask[b].sum().item()
+                else:
+                    actual_people = P
+                    
+                k = min(self.k_neighbors, actual_people - 1)  # Can't have more neighbors than people-1
+                if k > 0:
+                    # Only process valid people
+                    dist_batch = distances[b]  # [T, P, P]
+                    
+                    # Mask invalid distances to infinity
+                    dist_masked = dist_batch.clone()
+                    dist_masked[~valid_mask[b]] = float('inf')
+                    
+                    # Set diagonal to infinity to exclude self-connections
+                    eye_mask = torch.eye(P, device=distances.device, dtype=torch.bool)
+                    dist_masked[:, eye_mask] = float('inf')
+                    
+                    # Get k nearest neighbors for each valid person
+                    for p in range(actual_people):
+                        _, indices = torch.topk(dist_masked[:, p, :actual_people], k, dim=-1, largest=False)
+                        for t in range(T):
+                            adjacency[b, t, p, indices[t]] = 1.0
                             
         elif self.distance_threshold is not None:
             # Distance threshold approach
             adjacency = (distances <= self.distance_threshold).float()
+            # Apply valid mask
+            adjacency = adjacency * valid_mask.float()
             
         else:
             # Fully connected graph with distance-based weights
             # Use Gaussian kernel to convert distances to edge weights
-            sigma = distances.std() + 1e-8
+            # Only compute for valid connections
+            valid_distances = distances * valid_mask.float()
+            sigma = valid_distances[valid_distances > 0].std() + 1e-8
             adjacency = torch.exp(-distances ** 2 / (2 * sigma ** 2))
+            # Apply valid mask
+            adjacency = adjacency * valid_mask.float()
         
-        # Add self-loops
-        if self.self_loop:
+        # Add self-loops for valid people only
+        if self.self_loop and padding_mask is not None:
+            for b in range(B):
+                actual_people = padding_mask[b].sum().item()
+                eye = torch.eye(actual_people, device=distances.device)
+                adjacency[b, :, :actual_people, :actual_people] += eye.unsqueeze(0)
+        elif self.self_loop:
             eye = torch.eye(P, device=distances.device).unsqueeze(0).unsqueeze(0)
             adjacency = adjacency + eye
             
         # Normalize adjacency matrix (symmetric normalization)
-        adjacency = self._normalize_adjacency(adjacency)
+        adjacency = self._normalize_adjacency(adjacency, padding_mask)
         
         return adjacency
     
-    def _normalize_adjacency(self, adjacency):
+    def _normalize_adjacency(self, adjacency, padding_mask=None):
         """
         Symmetric normalization: D^{-1/2} A D^{-1/2}
+        Handles padding by ensuring padded nodes don't affect normalization
         """
         # Compute degree matrix
         degree = adjacency.sum(dim=-1, keepdim=True)
         degree = torch.clamp(degree, min=1e-8)  # Avoid division by zero
+        
+        # If we have padding, zero out degrees for padded people
+        if padding_mask is not None:
+            # padding_mask: [B, P] -> [B, 1, P, 1]
+            mask_expanded = padding_mask.unsqueeze(1).unsqueeze(-1)  # [B, 1, P, 1]
+            degree = degree * mask_expanded.float()
+            degree = torch.clamp(degree, min=1e-8)
         
         # D^{-1/2}
         degree_inv_sqrt = torch.pow(degree, -0.5)
         
         # D^{-1/2} A D^{-1/2}
         adjacency_normalized = degree_inv_sqrt * adjacency * degree_inv_sqrt.transpose(-2, -1)
+        
+        # Zero out connections to/from padded people
+        if padding_mask is not None:
+            valid_mask = padding_mask.unsqueeze(1) & padding_mask.unsqueeze(2)  # [B, P, P]
+            valid_mask = valid_mask.unsqueeze(1).expand(-1, adjacency.size(1), -1, -1)  # [B, T, P, P]
+            adjacency_normalized = adjacency_normalized * valid_mask.float()
         
         return adjacency_normalized
 
@@ -131,11 +174,12 @@ class GCNLayer(nn.Module):
         if self.bias is not None:
             nn.init.constant_(self.bias, 0)
             
-    def forward(self, x, adjacency):
+    def forward(self, x, adjacency, padding_mask=None):
         """
         Args:
             x: [B, P, D, T] - node features (people features)
             adjacency: [B, T, P, P] - adjacency matrix
+            padding_mask: [B, P] - bool mask indicating real people (True) vs padded (False)
             
         Returns:
             out: [B, P, D_out, T] - transformed node features
@@ -158,6 +202,12 @@ class GCNLayer(nn.Module):
         # Apply activation
         out = self.activation(out)
         
+        # Zero out features for padded people
+        if padding_mask is not None:
+            mask_expanded = padding_mask.unsqueeze(1).unsqueeze(-1)  # [B, 1, P, 1]
+            mask_expanded = mask_expanded.expand(-1, T, -1, self.out_features)  # [B, T, P, D_out]
+            out = out * mask_expanded.float()
+        
         # Rearrange back to [B, P, D_out, T]
         out = out.permute(0, 2, 3, 1)  # [B, P, D_out, T]
         
@@ -178,16 +228,17 @@ class GCNBlock(nn.Module):
         else:
             self.norm = nn.Identity()
             
-    def forward(self, x, adjacency):
+    def forward(self, x, adjacency, padding_mask=None):
         """
         Args:
             x: [B, P, D, T] - node features
             adjacency: [B, T, P, P] - adjacency matrix
+            padding_mask: [B, P] - bool mask indicating real people
             
         Returns:
             out: [B, P, D, T] - output features
         """
-        x_transformed = self.gcn(x, adjacency)
+        x_transformed = self.gcn(x, adjacency, padding_mask)
         x_transformed = self.norm(x_transformed)
         
         # Residual connection
@@ -226,20 +277,21 @@ class DynamicGCN(nn.Module):
             for _ in range(num_layers)
         ])
         
-    def forward(self, x, distances):
+    def forward(self, x, distances, padding_mask=None):
         """
         Args:
             x: [B, P, D, T] - node features (people features)
             distances: [B, T, P, P] - pairwise Euclidean distances
+            padding_mask: [B, P] - bool mask indicating real people
             
         Returns:
             out: [B, P, D, T] - output features after GCN
         """
         # Construct dynamic adjacency matrix
-        adjacency = self.graph_constructor(distances)
+        adjacency = self.graph_constructor(distances, padding_mask)
         
         # Apply GCN layers
         for gcn_block in self.gcn_blocks:
-            x = gcn_block(x, adjacency)
+            x = gcn_block(x, adjacency, padding_mask)
             
         return x

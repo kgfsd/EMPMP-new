@@ -116,7 +116,7 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
         
-def predict(model,h36m_motion_input,config,h36m_motion_target=None):
+def predict(model, h36m_motion_input, config, h36m_motion_target=None, padding_mask=None):
     b,p,t,jk=h36m_motion_input.shape
     traj=h36m_motion_input.clone().reshape(b,p,t,jk//3,3)#b,p,t,j,3
     if config.normalization:
@@ -126,7 +126,7 @@ def predict(model,h36m_motion_input,config,h36m_motion_target=None):
         h36m_motion_input_ = h36m_motion_input.clone()
         #b,p,n,c
         h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-    motion_pred = model(h36m_motion_input_.to(config.device),traj.to(config.device))
+    motion_pred = model(h36m_motion_input_.to(config.device), traj.to(config.device), padding_mask)
     # from thop import profile
     # flops, params = profile(model, inputs=(h36m_motion_input_.to(config.device),traj.to(config.device)))
 

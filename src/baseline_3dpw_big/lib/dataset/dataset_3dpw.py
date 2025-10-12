@@ -3,6 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader, ConcatDataset,TensorDataset
 from src.baseline_3dpw_big.lib.dataset.dataset_util import collate_batch, create_dataset,get_datasets_mine
+from src.baseline_3dpw_big.lib.dataset.data_utils import path_to_data
 import imageio
 import matplotlib.pyplot as plt
 from io import BytesIO
@@ -110,7 +111,7 @@ def get_3dpw_dataloader(split,cfg,shuffle,batch_size=None):
     elif split=="jrt":
         in_F, out_F = cfg.t_his, cfg.t_pred
         
-        data=torch.load('data/somof_test.pt',map_location=cfg.device).float()
+        data=torch.load(path_to_data('somof_test.pt'),map_location=cfg.device).float()
         # # 如果是 Tensor，则直接保存为 numpy
         # if isinstance(data, torch.Tensor):
         #     np.save('./data/somof_test.npy', data.numpy())

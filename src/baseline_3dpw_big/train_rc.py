@@ -24,6 +24,7 @@ from lr import update_lr_multistep
 from src.baseline_3dpw_big.config import config
 from src.models_dual_inter_traj_big.model import siMLPe as Model
 from src.baseline_3dpw_big.lib.dataset.dataset_3dpw import get_3dpw_dataloader
+from src.baseline_3dpw_big.lib.dataset.data_utils import path_to_repo
 from src.baseline_3dpw_big.lib.utils.logger import get_logger, print_and_log_info
 from src.baseline_3dpw_big.lib.utils.pyt_utils import ensure_dir
 import torch
@@ -245,9 +246,42 @@ if __name__ == '__main__':
         config.vis_dir = os.path.join(expr_dir, 'vis')
         ensure_dir(config.vis_dir)  # Create folder
         config.log_file = os.path.join(expr_dir, 'log.txt')
-        config.model_pth = args.model_path
+        # Convert relative path to absolute path using project root
+        if args.model_path and not os.path.isabs(args.model_path):
+            config.model_pth = path_to_repo(args.model_path)
+        else:
+            config.model_pth = args.model_path
         config.paixu = args.paixu  # Assuming args.paixu is defined
-
+        # Enable GCN-based approach
+        config.motion_mlp.use_gcn = True           # Set to True to use GCN
+        config.motion_mlp.gcn_layers = 2           # Number of GCN layers
+        
+        # Dynamic GCN configuration based on experiment name
+        if 'k_' in args.exp_name:
+            # k-NN configuration
+            k_val = args.exp_name.split('k_')[-1]
+            try:
+                config.motion_mlp.k_neighbors = int(k_val.split('_')[0])
+                config.motion_mlp.distance_threshold = None
+                print(f"Using k-NN GCN with k={config.motion_mlp.k_neighbors}")
+            except:
+                config.motion_mlp.k_neighbors = 2
+                config.motion_mlp.distance_threshold = None
+        elif 'dis_' in args.exp_name:
+            # Distance threshold configuration  
+            dis_val = args.exp_name.split('dis_')[-1]
+            try:
+                config.motion_mlp.distance_threshold = float(dis_val.replace('_', '.'))
+                config.motion_mlp.k_neighbors = None
+                print(f"Using distance threshold GCN with threshold={config.motion_mlp.distance_threshold}")
+            except:
+                config.motion_mlp.distance_threshold = 1.5
+                config.motion_mlp.k_neighbors = None
+        else:
+            # Default: Gaussian kernel (full connection)
+            config.motion_mlp.k_neighbors = None
+            config.motion_mlp.distance_threshold = None
+            print("Using Gaussian kernel GCN (full connection)")
         writer = SummaryWriter()
 
         # Get DCT matrix
@@ -278,11 +312,15 @@ if __name__ == '__main__':
         logger = get_logger(config.log_file, 'train')
         print_and_log_info(logger, json.dumps(config, indent=4, sort_keys=True, default=default_serializer))
 
-        if config.model_pth is not None:  # For pre-training
+        # Skip loading pretrained weights for GCN models due to structure changes
+        if config.model_pth is not None and not hasattr(config.motion_mlp, 'use_gcn'):
             state_dict = torch.load(config.model_pth, map_location=config.device)
             model.load_state_dict(state_dict, strict=True)
             print_and_log_info(logger, "Loading model path from {} ".format(config.model_pth))
             print("Loading model path from {} ".format(config.model_pth))
+        else:
+            print_and_log_info(logger, "Training GCN model from scratch (pretrained weights skipped)")
+            print("Training GCN model from scratch (pretrained weights skipped)")
 
         ##### ------ Training ------- #####
         nb_iter = 0

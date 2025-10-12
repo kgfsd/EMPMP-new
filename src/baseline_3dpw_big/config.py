@@ -20,7 +20,7 @@ C.seed = 888#304
 """please config ROOT_dir and user when u first using"""
 C.abs_dir = osp.dirname(osp.realpath(__file__))
 C.this_dir = C.abs_dir.split(osp.sep)[-1]
-C.repo_name = 'EMPMP_ALL'
+C.repo_name = 'EMPMP'
 C.root_dir = C.abs_dir[:C.abs_dir.index(C.repo_name) + len(C.repo_name)]
 
 
@@ -99,7 +99,10 @@ C.motion_fc_out.with_norm = False
 C.motion_fc_out.activation = 'relu'
 C.motion_fc_out.init_w_trunc_normal = True
 C.motion_fc_out.temporal_fc = False
-
+## GCN Config
+C.use_gcn = True           # Enable GCN
+C.k_neighbors = 2          # Use k-NN with k=2
+C.gcn_layers = 2           # 2 GCN layers per block
 """Train Config"""
 C.epoch=100
 C.vis_every=500
@@ -108,7 +111,7 @@ C.num_workers = 8
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=50000
+C.cos_lr_total_iters=5000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None

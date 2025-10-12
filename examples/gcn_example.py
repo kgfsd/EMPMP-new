@@ -109,13 +109,13 @@ def example3_compare_with_original():
     base_config.n_p = 3
     
     # Original model
-    config_original = base_config.copy()
+    config_original = edict(base_config.copy())
     config_original.use_gcn = False
     mlp_original = build_mlps(config_original)
     print(f"Original model: {type(mlp_original).__name__}")
     
     # GCN-based model
-    config_gcn = base_config.copy()
+    config_gcn = edict(base_config.copy())
     config_gcn.use_gcn = True
     config_gcn.k_neighbors = 2
     config_gcn.gcn_layers = 2

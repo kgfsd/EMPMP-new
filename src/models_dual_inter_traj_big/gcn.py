@@ -170,7 +170,7 @@ class GCNLayer(nn.Module):
         self.reset_parameters()
         
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.weight, gain=1e-8)
+        nn.init.xavier_uniform_(self.weight, gain=1)
         if self.bias is not None:
             nn.init.constant_(self.bias, 0)
             

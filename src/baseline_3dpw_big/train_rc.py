@@ -32,7 +32,7 @@ from torch.utils.tensorboard import SummaryWriter
 from src.baseline_3dpw_big.test import vim_test, random_pred, mpjpe_vim_test
 
 # 添加混合人数数据集支持
-from test_mixed_people import MixedPeopleDataset, collate_mixed_batch
+from src.baseline_3dpw_big.lib.dataset.mixed_people import MixedPeopleDataset, collate_mixed_batch
 
 # Ignore all warnings
 warnings.filterwarnings("ignore")
@@ -188,7 +188,7 @@ parser.add_argument('--weight', type=float, default=1., help='=loss weight')
 parser.add_argument('--device', type=str, default="cuda:0")
 parser.add_argument('--debug', type=bool, default=False)
 parser.add_argument('--n_p', type=int, default=2)
-parser.add_argument('--model_path', type=str, default='pt_ckpts/pt_rc.pth')
+parser.add_argument('--model_path', type=str, default=None)
 parser.add_argument('--vis_every', type=int, default=250000000000, help='Visualize every N iterations')
 parser.add_argument('--save_every', type=int, default=100, help='Save model and evaluate every N iterations')
 parser.add_argument('--print_every', type=int, default=100, help='Print training info every N iterations')
@@ -366,6 +366,7 @@ if __name__ == '__main__':
             dataloader_train = get_3dpw_dataloader(split="train", cfg=config, shuffle=True)
             dataloader_test = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True)
             dataloader_test_sample = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True, batch_size=1)
+
         random_iter = iter(dataloader_test_sample)
 
         # Create model
@@ -384,7 +385,7 @@ if __name__ == '__main__':
         print_and_log_info(logger, json.dumps(config, indent=4, sort_keys=True, default=default_serializer))
 
         # Skip loading pretrained weights for GCN models due to structure changes
-        if config.model_pth is not None and not hasattr(config.motion_mlp, 'use_gcn'):
+        if config.model_pth is not None :
             state_dict = torch.load(config.model_pth, map_location=config.device)
             model.load_state_dict(state_dict, strict=True)
             print_and_log_info(logger, "Loading model path from {} ".format(config.model_pth))

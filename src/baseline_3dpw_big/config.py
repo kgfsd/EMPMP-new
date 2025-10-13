@@ -112,7 +112,7 @@ C.num_workers = 4
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=2000
+C.cos_lr_total_iters=10000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None
@@ -137,7 +137,7 @@ C.aug_rotate=True
 C.aug_scale=False
 C.aug_permute=True
 
-C.use_mixed_people_dataset = True  # 是否使用混合人数数据集
+C.use_mixed_people_dataset = False  # 是否使用混合人数数据集
 
 if __name__ == '__main__':
     print(config.decoder.motion_mlp)

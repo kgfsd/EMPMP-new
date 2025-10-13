@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from src.models_dual_inter_traj_big.utils import AverageMeter,predict,Get_RC_Data
-from metrics import VIM, VAM
+from src.baseline_3dpw_big.metrics import VIM, VAM
 from src.models_dual_inter_traj_big.utils import Get_RC_Data,visuaulize
 def random_pred(config, model,iter):
     device=config.device

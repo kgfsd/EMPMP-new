@@ -17,6 +17,8 @@ class DATA(Dataset):
             self.data=np.load('./data/mupots_120_3persons.npy',allow_pickle=True)
         elif mode=="eval_mocap":
             self.data=np.load('./data/test_3_120_mocap.npy',allow_pickle=True)
+        elif mode=="mix":
+            self.data=self.data=np.load('./data/mix2_10persons.npy',allow_pickle=True)
 
         # #[n,P,T(120),J,3]
         # self.data=self.data.reshape(self.data.shape[0],self.data.shape[1],self.data.shape[2],-1,3)

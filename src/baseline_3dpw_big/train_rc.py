@@ -23,6 +23,8 @@ from src.models_dual_inter_traj_big.utils import Get_RC_Data, visuaulize, visuau
 from lr import update_lr_multistep
 from src.baseline_3dpw_big.config import config
 from src.models_dual_inter_traj_big.model import siMLPe as Model
+from src.models_dual_inter_traj_big.model_gcn_stylization import siMLPe_GCN_Stylization as Model_GCN
+from src.models_dual_inter_traj_big.model import siMLP as Model
 from src.baseline_3dpw_big.lib.dataset.dataset_3dpw import get_3dpw_dataloader
 from src.baseline_3dpw_big.lib.dataset.data_utils import path_to_repo
 from src.baseline_3dpw_big.lib.utils.logger import get_logger, print_and_log_info
@@ -290,10 +292,7 @@ if __name__ == '__main__':
         else:
             config.model_pth = args.model_path
         config.paixu = args.paixu  # Assuming args.paixu is defined
-        # Enable GCN-based approach
-        config.motion_mlp.use_gcn = True           # Set to True to use GCN
-        config.motion_mlp.gcn_layers = 2           # Number of GCN layers
-        
+
         # Dynamic GCN configuration based on experiment name
         if 'k_' in args.exp_name:
             # k-NN configuration
@@ -333,7 +332,7 @@ if __name__ == '__main__':
         if hasattr(config, 'use_mixed_people_dataset') and config.use_mixed_people_dataset:
             config.n_joint = 15  # Ensure n_joint matches MixedPeopleDataset
             config.motion.dim = config.n_joint * 3  # Update motion dim accordingly
-            print(" Using Mixed People Dataset for true dynamic people count!")
+            print(" Using Mixed People Dataset for true dynamic people count")
             data_dir = os.path.join(config.root_dir, 'data')
             mixed_dataset_train = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='train')
             mixed_dataset_test = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='test')
@@ -370,7 +369,8 @@ if __name__ == '__main__':
         random_iter = iter(dataloader_test_sample)
 
         # Create model
-        model = Model(config).to(device=config.device)
+      
+        model = Model_GCN(config).to(device=config.device)
         model.train()
         print(">>> total params: {:.2f}M".format(
             sum(p.numel() for p in list(model.parameters())) / 1000000.0))

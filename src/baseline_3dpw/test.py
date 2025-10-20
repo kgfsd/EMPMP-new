@@ -26,7 +26,7 @@ def random_pred(config, model,iter):
     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
     if config.rc:
         h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
-    motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+    motion_pred,_=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
     
     return h36m_motion_input[:1],motion_pred[:1]
 
@@ -61,7 +61,7 @@ def random_pred_pretrain(config, model,iter,joint_to_use):
     h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
     h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
     
-    motion_pred=predict(model,h36m_motion_input,config)
+    motion_pred,_=predict(model,h36m_motion_input,config)
 
     return h36m_motion_input[:1],motion_pred[:1]
 
@@ -384,7 +384,7 @@ def mpjpe_vim_test(config, model, eval_generator,is_mocap,select_vim_frames=[1, 
             h36m_motion_input,h36m_motion_target,sorted_indices=paixu_person(h36m_motion_input,h36m_motion_target)
         if config.rc:
             h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
-        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        motion_pred,_=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
         if config.paixu:
             motion_pred=inverse_sort_tensor(motion_pred,sorted_indices)
             h36m_motion_target=inverse_sort_tensor(h36m_motion_target,sorted_indices)
@@ -438,7 +438,7 @@ def vim_test(config, model, eval_generator,dataset="3dpw",return_all=True,select
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
         if config.rc:
             h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
-        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        motion_pred,_=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape
         motion_pred = motion_pred.transpose(1,2).flatten(-2).squeeze(0).cpu().detach().numpy()
@@ -494,7 +494,7 @@ def all_vis(config, model, eval_generator,dataset="3dpw",return_all=True,select_
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
         if config.rc:
             h36m_motion_input,h36m_motion_target=Get_RC_Data(h36m_motion_input,h36m_motion_target)
-        motion_pred=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
+        motion_pred,_=predict(model,h36m_motion_input,config,h36m_motion_target=h36m_motion_target)
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape
         motion_pred = motion_pred.reshape(b,p,n,config.n_joint,3)
@@ -544,7 +544,7 @@ def vim_test_pretrain(config, model, test_loader,joint_to_use,dataset="3dpw",ret
         h36m_motion_input=torch.tensor(h36m_motion_input,device=device).float()
         h36m_motion_target=torch.tensor(h36m_motion_target,device=device).float()
         
-        motion_pred=predict(model,h36m_motion_input,config)
+        motion_pred,_=predict(model,h36m_motion_input,config)
 
         #目标：b,n,p*c
         b,p,n,c = motion_pred.shape

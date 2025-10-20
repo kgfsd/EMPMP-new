@@ -82,8 +82,8 @@ C.motion_mlp.num_layers = 48
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
-C.motion_mlp.n_p = 3
 C.motion_mlp.interaction_interval = 16
+C.motion_mlp.gcn_layers = 2
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim
@@ -100,19 +100,22 @@ C.motion_fc_out.with_norm = False
 C.motion_fc_out.activation = 'relu'
 C.motion_fc_out.init_w_trunc_normal = True
 C.motion_fc_out.temporal_fc = False
-## GCN Config
-C.use_gcn = True           # Enable GCN
-C.k_neighbors = 2          # Use k-NN with k=2
-C.gcn_layers = 2           # 2 GCN layers per block
+## GCN Config (for reference, actual values should be in motion_mlp above)
+
+C.use_mixed_people_dataset = False  # 是否使用混合人数数据集
+
 """Train Config"""
 C.epoch=100
 C.vis_every=500
 C.batch_size = 128
-C.num_workers = 4
+C.num_workers = 8
+
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=10000
+
+C.cos_lr_total_iters=5000
+
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None
@@ -137,7 +140,6 @@ C.aug_rotate=True
 C.aug_scale=False
 C.aug_permute=True
 
-C.use_mixed_people_dataset = False  # 是否使用混合人数数据集
 
 if __name__ == '__main__':
     print(config.decoder.motion_mlp)

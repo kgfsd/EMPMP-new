@@ -1,8 +1,16 @@
+"""
+基础MLP模块 - 提供时序和空间全连接层及归一化组件
+"""
 import torch
 from torch import nn
 from einops.layers.torch import Rearrange
 
 class LN(nn.Module):
+    """
+    空间维度层归一化 - 在特征维度D上进行归一化
+    
+    输入输出: [B, P, D, T]
+    """
     def __init__(self, dim, epsilon=1e-5):
         super().__init__()
         self.epsilon = epsilon
@@ -11,7 +19,7 @@ class LN(nn.Module):
         self.beta = nn.Parameter(torch.zeros([1, dim, 1]), requires_grad=True)
 
     def forward(self, x):
-        #B,P,D,T
+        # x: [B, P, D, T] - 在D维度上归一化
         mean = x.mean(axis=-2, keepdim=True)
         var = ((x - mean) ** 2).mean(dim=-2, keepdim=True)
         std = (var + self.epsilon).sqrt()
@@ -20,6 +28,11 @@ class LN(nn.Module):
         return y
 
 class LN_v2(nn.Module):
+    """
+    时序维度层归一化 - 在时间维度T上进行归一化
+    
+    输入输出: [B, P, D, T]
+    """
     def __init__(self, dim, epsilon=1e-5):
         super().__init__()
         self.epsilon = epsilon
@@ -28,6 +41,7 @@ class LN_v2(nn.Module):
         self.beta = nn.Parameter(torch.zeros([1, 1, dim]), requires_grad=True)
 
     def forward(self, x):
+        # x: [B, P, D, T] - 在T维度上归一化
         mean = x.mean(axis=-1, keepdim=True)
         var = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
         std = (var + self.epsilon).sqrt()
@@ -36,6 +50,11 @@ class LN_v2(nn.Module):
         return y
 
 class Spatial_FC(nn.Module):
+    """
+    空间全连接层 - 在特征维度D上进行线性变换
+    
+    输入输出: [B, P, D, T]
+    """
     def __init__(self, dim):
         super(Spatial_FC, self).__init__()
         self.fc = nn.Linear(dim, dim)
@@ -43,21 +62,40 @@ class Spatial_FC(nn.Module):
         self.arr1 = Rearrange('b d n -> b n d')
 
     def forward(self, x):
+        # x: [B, P, D, T] -> [B, D, P*T] -> FC -> [B, P, D, T]
         x = self.arr0(x)
         x = self.fc(x)
         x = self.arr1(x)
         return x
 
 class Temporal_FC(nn.Module):
+    """
+    时序全连接层 - 在时间维度T上进行线性变换
+    
+    输入输出: [B, P, D, T]
+    """
     def __init__(self, dim):
         super(Temporal_FC, self).__init__()
         self.fc = nn.Linear(dim, dim)
 
     def forward(self, x):
+        # x: [B, P, D, T] - 在T维度上进行FC
         x = self.fc(x)
         return x
 
 class MLPblock(nn.Module):
+    """
+    基础MLP块 - 时序/空间FC + 归一化
+    
+    Args:
+        dim: 特征维度D
+        seq: 序列长度T
+        use_norm: 是否使用归一化
+        use_spatial_fc: True使用空间FC，False使用时序FC
+        layernorm_axis: 归一化轴('spatial'/'temporal'/'all')
+    
+    输入输出: [B, P, D, T]
+    """
 
     def __init__(self, dim, seq, use_norm=True, use_spatial_fc=False, layernorm_axis='spatial'):
         super().__init__()

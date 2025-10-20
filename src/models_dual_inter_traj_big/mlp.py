@@ -233,12 +233,12 @@ class StylizationBlock(nn.Module):
         return x,x_global
 
 
-class GCNStylizationBlock(nn.Module):
+
     """
     Enhanced StylizationBlock with GCN for handling variable numbers of people.
     Uses dynamic graph construction based on Euclidean distances.
     """
-    def __init__(self, time_dim, num_p, dim, k_neighbors=None, distance_threshold=None, gcn_layers=2):
+    def __init__(self, time_dim, num_p, dim,gcn_layers=2):
         super().__init__()
         # Original stylization components
         self.time_dim = time_dim
@@ -255,8 +255,6 @@ class GCNStylizationBlock(nn.Module):
         self.gcn = DynamicGCN(
             dim=dim,
             num_layers=gcn_layers,
-            k_neighbors=k_neighbors,
-            distance_threshold=distance_threshold
         )
         
         # Linear layer to blend GCN output
@@ -371,13 +369,13 @@ class TransMLP(nn.Module):
         return x
 
 
-class TransMLPWithGCN(nn.Module):
+
     """
     Enhanced TransMLP with GCN-based global flow module.
     Supports variable numbers of people through dynamic graph construction.
     """
     def __init__(self, dim, seq, use_norm, use_spatial_fc, num_layers, layernorm_axis, 
-                 interaction_interval=2, p=3, k_neighbors=None, distance_threshold=None, gcn_layers=2):
+                 interaction_interval=2, p=3,gcn_layers=2):
         super().__init__()
         self.local_mlps = nn.Sequential(*[
             MLPblock(dim, seq, use_norm, use_spatial_fc, layernorm_axis)
@@ -394,7 +392,7 @@ class TransMLPWithGCN(nn.Module):
         
         # Use GCN-based stylization blocks
         self.stylization_blocks = nn.ModuleList([
-            GCNStylizationBlock(seq, p, dim, k_neighbors=k_neighbors, distance_threshold=distance_threshold, gcn_layers=gcn_layers)
+            GCNStylizationBlock(seq, p, dim, gcn_layers=gcn_layers)
             for _ in range(num_layers//interaction_interval)
         ])
         self.interaction_interval = interaction_interval
@@ -470,12 +468,7 @@ def build_mlps(args):
     
     # Check if GCN-based approach should be used
     use_gcn = getattr(args, 'use_gcn', False)
-    
-    if use_gcn:
-        k_neighbors = getattr(args, 'k_neighbors', None)
-        distance_threshold = getattr(args, 'distance_threshold', None)
-        gcn_layers = getattr(args, 'gcn_layers', 2)
-        return TransMLPWithGCN(
+    return TransMLP(
             dim=args.hidden_dim,
             seq=seq_len,
             use_norm=args.with_normalization,
@@ -484,21 +477,7 @@ def build_mlps(args):
             layernorm_axis=args.norm_axis,
             interaction_interval=args.interaction_interval,
             p=args.n_p,
-            k_neighbors=k_neighbors,
-            distance_threshold=distance_threshold,
-            gcn_layers=gcn_layers,
-        )
-    else:
-        return TransMLP(
-            dim=args.hidden_dim,
-            seq=seq_len,
-            use_norm=args.with_normalization,
-            use_spatial_fc=args.spatial_fc_only,
-            num_layers=args.num_layers,
-            layernorm_axis=args.norm_axis,
-            interaction_interval=args.interaction_interval,
-            p=args.n_p,
-        )
+    )
 
 
 def _get_activation_fn(activation):

@@ -12,7 +12,8 @@ import numpy as np
 from src.models_dual_inter_traj_out_T.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,getRandomPermuteOrder,getRandomRotatePoseTransform,getRandomScaleTransform
 from lr import update_lr_multistep
 from src.baseline_h36m_15to45.config import config
-from src.models_dual_inter_traj_out_T.model import siMLPe as Model
+#from src.models_dual_inter_traj_out_T.model import siMLPe as Model
+from src.models_dual_inter_traj_out_T.model_gcn_stylization import siMLPe_GCN_Stylization as Model
 from src.baseline_h36m_15to45.lib.datasets.dataset_mocap import DATA
 from lib.utils.logger import get_logger, print_and_log_info
 from lib.utils.pyt_utils import  ensure_dir
@@ -151,7 +152,6 @@ else:
     dataset = DATA( 'train', config.t_his,config.t_pred,n_p=config.n_p)
     eval_dataset_mocap = DATA( 'eval_mocap', config.t_his,config.t_pred_eval,n_p=config.n_p)
     eval_dataset_mupots=DATA('eval_mutpots',config.t_his,config.t_pred_eval,n_p=config.n_p)
-    
 # initialize optimizer
 optimizer = torch.optim.Adam(model.parameters(),
                              lr=config.cos_lr_max,
@@ -231,14 +231,15 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
                     print("begin test")
                     
                     eval_generator_mocap = eval_dataset_mocap.iter_generator(batch_size=config.batch_size)#按顺序遍历一次数据集
-                    mpjpe_res_mocap,vim_res_mocap,jpe_res_mocap,ape_res_mocap,fde_res_mocap=mpjpe_vim_test(config, model, eval_generator_mocap,is_mocap=True,select_vim_frames=[14,29,44],select_mpjpe_frames=[15,30,45])#得到评估结果
+                    mpjpe_res_mocap,vim_res_mocap,jpe_res_mocap,ape_res_mocap,fde_res_mocap=mpjpe_vim_test(config, model, eval_generator_mocap,is_mocap=True,select_vim_frames=[9,19,29],select_mpjpe_frames=[10,20,30])#得到评估结果
                     
                     # if mpjpe_res_mocap[0]<min_mpjpe_mocap:#保存最好的模型
                     #     min_mpjpe_mocap=mpjpe_res_mocap[0]
                     #     torch.save(model.state_dict(), config.snapshot_dir + '/model-iter-' + str(nb_iter + 1) + '.pth')
                     #     print("save model")
                     eval_generator_mupots = eval_dataset_mupots.iter_generator(batch_size=config.batch_size)
-                    mpjpe_res_mupots,vim_res_mupots,jpe_res_mupots,ape_res_mupots,fde_res_mupots=mpjpe_vim_test(config, model, eval_generator_mupots,is_mocap=False,select_vim_frames=[14,29,44],select_mpjpe_frames=[15,30,45])
+                    mpjpe_res_mupots,vim_res_mupots,jpe_res_mupots,ape_res_mupots,fde_res_mupots=mpjpe_vim_test(config, model, eval_generator_mupots,is_mocap=False,select_vim_frames=[9,19,29],select_mpjpe_frames=[9,19,29])
+
                     
                     write('mpjpe_mocap',mpjpe_res_mocap,nb_iter,config.expr_dir)
                     write('vim_mocap',vim_res_mocap,nb_iter,config.expr_dir)
@@ -251,7 +252,9 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
                     write('jpe_mupots',jpe_res_mupots,nb_iter,config.expr_dir)
                     write('ape_mupots',ape_res_mupots,nb_iter,config.expr_dir)
                     write('fde_mupots',fde_res_mupots,nb_iter,config.expr_dir)
+
                     
+
                 model.train()
         # Visualize model
         if ((nb_iter + 1) % config.vis_every ==  0 or nb_iter==0) and config.dataset!="h36m":

@@ -22,7 +22,8 @@ from src.models_dual_inter_traj_3dpw.utils import Get_RC_Data, visuaulize, visua
     gen_velocity, predict, update_metric, getRandomPermuteOrder, getRandomRotatePoseTransform, paixu_person
 from lr import update_lr_multistep
 from src.baseline_3dpw.config import config
-from src.models_dual_inter_traj_3dpw.model import siMLPe as Model
+from src.models_dual_inter_traj_3dpw.model_gcn_stylization import siMLPe_GCN_Stylization as Model
+#from src.models_dual_inter_traj_3dpw.model import siMLPe as Model
 from src.baseline_3dpw.lib.dataset.dataset_3dpw import get_3dpw_dataloader
 from src.baseline_3dpw.lib.utils.logger import get_logger, print_and_log_info
 from src.baseline_3dpw.lib.utils.pyt_utils import ensure_dir
@@ -31,7 +32,8 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from src.baseline_3dpw.test import vim_test, random_pred, mpjpe_vim_test
 from src.models_dual_inter_traj_3dpw.model import inverse_sort_tensor
-
+# 添加混合人数数据集支持
+from src.baseline_3dpw.lib.dataset.mixed_people import MixedPeopleDataset, collate_mixed_batch
 # 忽略所有警告
 warnings.filterwarnings("ignore")
 
@@ -98,7 +100,7 @@ def train_step(h36m_motion_input, h36m_motion_target, padding_mask, model, optim
     if config.rc:
         h36m_motion_input, h36m_motion_target = Get_RC_Data(h36m_motion_input, h36m_motion_target)
 
-    motion_pred = predict(model, h36m_motion_input, config, h36m_motion_target)  # b,p,n,c
+    motion_pred, loss_lk = predict(model, h36m_motion_input, config, h36m_motion_target)  # b,p,n,c
     b, p, n, c = h36m_motion_target.shape
     if args.paixu:  # DCT之后
         motion_pred = inverse_sort_tensor(motion_pred, sorted_indices)  # b,p,n,c
@@ -111,6 +113,8 @@ def train_step(h36m_motion_input, h36m_motion_target, padding_mask, model, optim
     expanded_mask = padding_mask.unsqueeze(-1).repeat(1, 1, n * config.n_joint).reshape(-1)
     # 计算loss
     loss = torch.mean(torch.norm(motion_pred - h36m_motion_target, dim=1)[expanded_mask])
+    if loss_lk is not None:
+        loss += config.train_weight_lk * loss_lk
 
     if config.use_relative_loss:
         motion_pred = motion_pred.reshape(b, p, n, config.n_joint, 3)
@@ -254,22 +258,61 @@ if __name__ == '__main__':
         config.dct_m = dct_m
         config.idct_m = idct_m
 
-        # Create model
-        model = Model(config).to(device=config.device)
-        model.train()
-        print(">>> total params: {:.2f}M".format(
-            sum(p.numel() for p in list(model.parameters())) / 1000000.0))
-
         # DataLoader 的创建必须在 if __name__ == '__main__': 块中
+        """
         dataloader_train = get_3dpw_dataloader(split="train", cfg=config, shuffle=True)
         dataloader_test = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True)
         dataloader_test_sample = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True, batch_size=1)
         random_iter = iter(dataloader_test_sample)
+        """
+        if hasattr(config, 'use_mixed_people_dataset') and config.use_mixed_people_dataset:
+            config.n_joint = 15  # Ensure n_joint matches MixedPeopleDataset
+            config.motion.dim = config.n_joint * 3  # Update motion dim accordingly
+            print(" Using Mixed People Dataset for true dynamic people count")
+            data_dir = os.path.join(config.root_dir, 'data')
+            mixed_dataset_train = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='train')
+            mixed_dataset_test = MixedPeopleDataset(data_dir, t_his=config.t_his, t_pred=config.t_pred, split='test')
+            
+            dataloader_train = torch.utils.data.DataLoader(
+                mixed_dataset_train, 
+                batch_size=config.batch_size, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=config.num_workers
+            )
+            dataloader_test = torch.utils.data.DataLoader(
+                mixed_dataset_test, 
+                batch_size=config.batch_size, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=config.num_workers
+            )
+            dataloader_test_sample = torch.utils.data.DataLoader(
+                mixed_dataset_test, 
+                batch_size=1, 
+                shuffle=True,
+                collate_fn=collate_mixed_batch,
+                num_workers=0
+            )
+        else:
+            config.n_joint = 13  # Ensure n_joint matches 3DPW dataset
+            config.motion.dim = config.n_joint * 3  # Update motion dim accordingly
+            print("Using standard 3DPW dataset")
+            dataloader_train = get_3dpw_dataloader(split="train", cfg=config, shuffle=True)
+            dataloader_test = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True)
+            dataloader_test_sample = get_3dpw_dataloader(split="jrt", cfg=config, shuffle=True, batch_size=1)
 
+        # Create model
+        model = Model(config).to(device=config.device)
+        model.train()
+        print(">>> total params: {:.2f}M".format(
+            sum(p.numel() for p in list(model.parameters())) / 1000000.0))    
+            
         # initialize optimizer
         optimizer = torch.optim.Adam(model.parameters(),
                                      lr=config.cos_lr_max,
                                      weight_decay=config.weight_decay)
+                                     
         # Create logger
         logger = get_logger(config.log_file, 'train')
         print_and_log_info(logger, json.dumps(config, indent=4, sort_keys=True, default=default_serializer))

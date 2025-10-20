@@ -127,7 +127,7 @@ def predict(model,h36m_motion_input,config,h36m_motion_target=None):
         h36m_motion_input_ = h36m_motion_input.clone()
         #b,p,n,c
         h36m_motion_input_ = torch.matmul(config.dct_m[:, :, :config.dct_len], h36m_motion_input_.to(config.device))
-    motion_pred = model(h36m_motion_input_.to(config.device),traj.to(config.device))
+    motion_pred, loss_lk = model(h36m_motion_input_.to(config.device),traj.to(config.device))
     # from thop import profile
     # flops, _ = profile(model, inputs=(h36m_motion_input_.to(config.device),traj.to(config.device)))
     # print(">>> total params: {:.2f}M".format(
@@ -142,7 +142,7 @@ def predict(model,h36m_motion_input,config,h36m_motion_target=None):
     else:
         offset = h36m_motion_input[:, :,-1:].to(config.device)#b,p,1,c
         motion_pred = motion_pred[:,:, :config.t_pred] + offset#b,p,n,c
-    return motion_pred
+    return motion_pred, loss_lk
 
 def data_denormalization(motion_pred,h36m_motion_input,mean,config=None):
     b,p,_,c = motion_pred.shape

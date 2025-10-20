@@ -13,7 +13,8 @@ import numpy as np
 from src.models_dual_inter_traj.utils import visuaulize,seed_set,get_dct_matrix,gen_velocity,predict,getRandomPermuteOrder,getRandomRotatePoseTransform,getRandomScaleTransform
 from lr import update_lr_multistep
 from src.baseline_h36m_15to15.config import config
-from src.models_dual_inter_traj.model import siMLPe as Model
+#from src.models_dual_inter_traj.model import siMLPe as Model
+from src.models_dual_inter_traj_3dpw.model_gcn_stylization import siMLPe_GCN_Stylization as Model
 from src.baseline_h36m_15to15.lib.datasets.dataset_mocap import DATA
 from lib.utils.logger import get_logger, print_and_log_info
 from lib.utils.pyt_utils import  ensure_dir
@@ -239,6 +240,7 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
                     eval_generator_mupots = eval_dataset_mupots.iter_generator(batch_size=config.batch_size)
                     mpjpe_res_mupots,vim_res_mupots,jpe_res_mupots,ape_res_mupots,fde_res_mupots=mpjpe_vim_test(config, model, eval_generator_mupots,is_mocap=False,select_vim_frames=[1, 3, 7, 9, 14],select_mpjpe_frames=[3,9,15])
                     
+                                                                                                                                                                                                                                          
                     write('mpjpe_mocap',mpjpe_res_mocap,nb_iter,config.expr_dir)
                     write('vim_mocap',vim_res_mocap,nb_iter,config.expr_dir)
                     write('jpe_mocap',jpe_res_mocap,nb_iter,config.expr_dir)
@@ -250,6 +252,8 @@ while (nb_iter + 1) < config.cos_lr_total_iters:
                     write('jpe_mupots',jpe_res_mupots,nb_iter,config.expr_dir)
                     write('ape_mupots',ape_res_mupots,nb_iter,config.expr_dir)
                     write('fde_mupots',fde_res_mupots,nb_iter,config.expr_dir)
+
+                    
                     
                 model.train()
         # Visualize model

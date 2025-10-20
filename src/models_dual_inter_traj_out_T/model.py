@@ -31,55 +31,6 @@ def compute_distances_hierarchical_normalization(positions,zero_score=True):#B,P
         standardized_distances = distances
     return standardized_distances  # Shape: [B, T, P, P]
 
-# class siMLPe(nn.Module):
-#     def __init__(self, config):
-#         self.config = copy.deepcopy(config)
-#         super(siMLPe, self).__init__()
-#         self.arr0 = Rearrange('b p n d -> b p d n')
-#         self.arr1 = Rearrange('b p d n -> b p n d')
-
-#         self.motion_mlp = build_mlps(self.config.motion_mlp)
-
-#         self.temporal_fc_in = config.motion_fc_in.temporal_fc
-#         self.temporal_fc_out = config.motion_fc_out.temporal_fc
-#         if self.temporal_fc_in:
-#             self.motion_fc_in = nn.Linear(self.config.motion.h36m_input_length_dct, self.config.motion.h36m_input_length_dct)
-#         else:
-#             self.motion_fc_in = nn.Linear(self.config.motion.dim, self.config.motion.dim)#!!!!!
-#         if self.temporal_fc_out:
-#             self.motion_fc_out = nn.Linear(self.config.motion.h36m_input_length_dct, self.config.motion.h36m_input_length_dct)
-#         else:
-#             self.motion_fc_out = nn.Linear(self.config.motion.dim, self.config.motion.dim)#!!!!!!!!!!
-#             self.motion_fc_out_t=nn.Linear(self.config.motion.h36m_input_length_dct, config.motion_mlp.out_len)#!!!!!!!!!!
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.xavier_uniform_(self.motion_fc_out.weight, gain=1e-8)
-#         # nn.init.xavier_uniform_(self.motion_fc_out.weight)
-
-#         nn.init.constant_(self.motion_fc_out.bias, 0)
-
-#     def forward(self, motion_input,traj):
-#         distances=compute_distances_hierarchical_normalization(traj,zero_score=False)
-#         if self.temporal_fc_in:
-#             motion_feats = self.arr0(motion_input)
-#             motion_feats = self.motion_fc_in(motion_feats)
-#         else:
-#             motion_feats = self.motion_fc_in(motion_input)#B,P,T,D
-#             motion_feats = self.arr0(motion_feats)#B,P,D,T
-
-#         motion_feats = self.motion_mlp(motion_feats,distances)
-
-#         if self.temporal_fc_out:
-#             motion_feats = self.motion_fc_out(motion_feats)
-#             motion_feats = self.arr1(motion_feats)
-#         else:
-#             motion_feats=self.motion_fc_out_t(motion_feats)#B,P,D,T
-#             motion_feats = self.arr1(motion_feats)#B,P,T,D
-#             motion_feats = self.motion_fc_out(motion_feats)#B,P,T,D
-
-#         return motion_feats
-
 
 #第二种输出方式
 class siMLPe(nn.Module):
@@ -135,53 +86,3 @@ class siMLPe(nn.Module):
         return motion_feats
 
 
-# #第三种输出方式
-# class siMLPe(nn.Module):
-#     def __init__(self, config):
-#         self.config = copy.deepcopy(config)
-#         super(siMLPe, self).__init__()
-#         self.arr0 = Rearrange('b p n d -> b p d n')
-#         self.arr1 = Rearrange('b p d n -> b p n d')
-
-#         self.motion_mlp = build_mlps(self.config.motion_mlp)
-
-#         self.temporal_fc_in = config.motion_fc_in.temporal_fc
-#         self.temporal_fc_out = config.motion_fc_out.temporal_fc
-#         if self.temporal_fc_in:
-#             self.motion_fc_in = nn.Linear(self.config.motion.h36m_input_length_dct, self.config.motion.h36m_input_length_dct)
-#         else:
-#             self.motion_fc_in = nn.Linear(self.config.motion.dim, self.config.motion.dim)#!!!!!
-#         if self.temporal_fc_out:
-#             self.motion_fc_out = nn.Linear(self.config.motion.h36m_input_length_dct, self.config.motion.h36m_input_length_dct)
-#         else:
-#             self.motion_fc_out = nn.Linear(self.config.motion.dim, self.config.motion.dim)#!!!!!!!!!!
-#             self.motion_fc_out_t=nn.Linear(self.config.motion.h36m_input_length_dct, config.motion_mlp.out_len)#!!!!!!!!!!
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.xavier_uniform_(self.motion_fc_out.weight, gain=1e-8)
-#         # nn.init.xavier_uniform_(self.motion_fc_out.weight)
-
-#         nn.init.constant_(self.motion_fc_out.bias, 0)
-
-#     def forward(self, motion_input,traj):
-#         distances=compute_distances_hierarchical_normalization(traj,zero_score=True)
-#         if self.temporal_fc_in:
-#             motion_feats = self.arr0(motion_input)
-#             motion_feats = self.motion_fc_in(motion_feats)
-#         else:
-#             motion_feats = self.motion_fc_in(motion_input)#B,P,T,D
-#             motion_feats = self.arr0(motion_feats)#B,P,D,T
-
-#         motion_feats = self.motion_mlp(motion_feats,distances)
-
-#         if self.temporal_fc_out:
-#             motion_feats = self.motion_fc_out(motion_feats)
-#             motion_feats = self.arr1(motion_feats)
-#         else:
-#             motion_feats=self.motion_fc_out_t(motion_feats)#B,P,D,3T
-#             motion_feats = self.arr1(motion_feats)#B,P,3T,D
-#             b,p,t,d=motion_feats.shape
-#             motion_feats = self.motion_fc_out(motion_feats)#B,P,3T,D
-
-#         return motion_feats

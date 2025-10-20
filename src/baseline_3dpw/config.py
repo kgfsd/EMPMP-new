@@ -20,7 +20,7 @@ C.seed = 888#304
 """please config ROOT_dir and user when u first using"""
 C.abs_dir = osp.dirname(osp.realpath(__file__))
 C.this_dir = C.abs_dir.split(osp.sep)[-1]
-C.repo_name = 'EMPMP_ALL'
+C.repo_name = 'EMPMP'
 C.root_dir = C.abs_dir[:C.abs_dir.index(C.repo_name) + len(C.repo_name)]
 
 
@@ -48,7 +48,6 @@ C.dataset="others"
 C.h36m_anno_dir = osp.join(C.root_dir, 'data/h36m/')
 C.motion = edict()
 
-C.n_p=3
 C.t_his=16
 C.t_pred=14
 C.dct_len=16
@@ -82,7 +81,7 @@ C.motion_mlp.num_layers = 48
 C.motion_mlp.with_normalization = True
 C.motion_mlp.spatial_fc_only = False
 C.motion_mlp.norm_axis = 'spatial'
-C.motion_mlp.p=3
+
 ## Motion Network FC In
 C.motion_fc_in = edict()
 C.motion_fc_in.in_features = C.motion.dim
@@ -99,8 +98,18 @@ C.motion_fc_out.with_norm = False
 C.motion_fc_out.activation = 'relu'
 C.motion_fc_out.init_w_trunc_normal = True
 C.motion_fc_out.temporal_fc = False
-
+#IPLM
+C.ipm = edict()
+C.ipm.feature_dim = 64   # F_ipm 的特征维度 (轻量级: 128->64)
+C.ipm.hidden_dim = 128   # InteractionFeatureExtractor 的隐藏层维度 (轻量级: 256->128)
+C.ipm.knowledge_space_size = 256 # 知识空间 K 的大小 (轻量级: 512->256)
+C.ipm.lr = 0.01 
+C.train_weight_lk = 0.1 
+C.motion_mlp.use_iplm=False  
+C.motion_mlp.iplm_config = config.ipm
+C.motion_mlp.iplm_interval = 8  # 每8层使用一次IPLM (选择性使用)  
 """Train Config"""
+C.use_mixed_people_dataset = False  # 是否使用混合人数数据集
 C.epoch=200
 C.vis_every=500
 C.batch_size = 256
@@ -108,7 +117,7 @@ C.num_workers = 8
 C.device="cuda"
 C.cos_lr_max=0.0001
 C.cos_lr_min=5e-8
-C.cos_lr_total_iters=50000
+C.cos_lr_total_iters=10000
 C.expr_dir=""
 C.weight_decay = 1e-4
 C.model_pth = None

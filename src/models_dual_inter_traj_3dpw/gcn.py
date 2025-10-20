@@ -187,7 +187,7 @@ class GCNBlock(nn.Module):
         self.gcn = GCNLayer(dim, dim, bias=True, activation='relu')
         self.use_norm = use_norm
         if use_norm:
-            from .mlp import LN
+            from .mlp_gcn_stylization import LN
             self.norm = LN(dim)
         else:
             self.norm = nn.Identity()
@@ -221,8 +221,6 @@ class DynamicGCN(nn.Module):
         Args:
             dim: Feature dimension
             num_layers: Number of GCN layers
-            k_neighbors: Number of neighbors for k-NN graph construction
-            distance_threshold: Distance threshold for edge creation
         """
         super().__init__()
         self.dim = dim

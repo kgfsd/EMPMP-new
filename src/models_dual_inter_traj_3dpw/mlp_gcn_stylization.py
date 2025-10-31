@@ -146,12 +146,13 @@ class MLPblock(nn.Module):
             nn.init.xavier_uniform_(self.ipm_to_mlp_proj.weight, gain=1.0)
             nn.init.constant_(self.ipm_to_mlp_proj.bias, 0)
 
-    def forward(self, x, distances=None, padding_mask=None):
+    def forward(self, x, x_global=None, distances=None, padding_mask=None):
         """
         前向传播
         
         Args:
             x: [B, P, D, T] - 输入特征
+            x_global: [B, P, D, T] - 全局特征 (用于IPLM应用)
             distances: [B, T, P, P] - 人际距离矩阵 (仅在使用IPLM时需要)
             padding_mask: [B, P] - 有效人员掩码 (仅在使用IPLM时需要)
         
@@ -161,17 +162,17 @@ class MLPblock(nn.Module):
         """
         loss_lk = None
         
-        # IPLM先验知识学习 (在局部特征处理前应用)
-        if self.use_iplm and distances is not None:
+        # IPLM先验知识学习 (应用到全局特征而非局部特征)
+        if self.use_iplm and distances is not None and x_global is not None:
             # 提取交互特征
             f_ipm = self.ipm_feature_extractor(distances, padding_mask)  # [B, T, D_ipm]
             f_ipmlm, loss_lk = self.iplm(f_ipm)  # [B, T, D_ipm], loss
             
-            # 投影到MLP特征维度并融合
+            # 投影到MLP特征维度并融合到全局特征
             ipm_features = self.ipm_to_mlp_proj(f_ipmlm)  # [B, T, D]
-            # 广播到 [B, P, D, T] 并与输入特征融合
+            # 广播到 [B, P, D, T] 并与全局特征融合
             imp_features = ipm_features.unsqueeze(1).permute(0, 1, 3, 2)  # [B, 1, D, T]
-            x = x + imp_features  # 残差连接融合先验知识
+            x_global = x_global + imp_features  # 残差连接融合先验知识到全局特征
         
         # 时序处理
         x_ = self.fc0(x)
@@ -183,10 +184,8 @@ class MLPblock(nn.Module):
         x__ = self.norm1(x__)
         x = x + x__
         
-        if self.use_iplm:
-            return x, loss_lk
-        else:
-            return x
+        # 始终返回两个值以保持接口一致性
+        return x, loss_lk
 
 
 def zero_module(module):
@@ -440,31 +439,35 @@ class TransMLPWithGCNStylization(nn.Module):
         # 初始化全局特征
         x_global = self.gcn_blocks[0](x, distances, padding_mask)  # [B, P, D, T]
         
-        # 共享IPLM处理 - 只计算一次
-        imp_features = None
+        # 共享IPLM处理（按间隔应用到局部/全局特征）
+        f_ipm = None
         if self.use_iplm and distances is not None:
-            # 提取交互特征
+            # 仅提取交互特征，具体融合按 iplm_interval 触发
             f_ipm = self.shared_ipm_feature_extractor(distances, padding_mask)  # [B, T, D_ipm]
-            f_ipmlm, loss_lk = self.shared_iplm(f_ipm)  # [B, T, D_ipm], loss
-            
-            if loss_lk is not None:
-                total_loss_lk += loss_lk
-            
-            # 投影到MLP特征维度
-            ipm_features = self.shared_ipm_to_mlp_proj(f_ipmlm)  # [B, T, D]
-            # 广播到 [B, P, D, T] 格式
-            imp_features = ipm_features.unsqueeze(1).permute(0, 1, 3, 2)  # [B, 1, D, T]
+        # 局部优先阶段边界（前 1/3 层）
+        local_phase_end = max(1, self.num_layers // 3)
         
         # 多层MLP处理与定期交互
         for i, local_layer in enumerate(self.local_mlps):
-            # 选择性应用共享IPLM特征
-            if imp_features is not None and (i + 1) % self.iplm_interval == 0:
-                x = x + imp_features  # 残差连接融合先验知识
+            # 局部MLP处理 - 传递全局特征用于IPLM应用
+            x, loss_lk = local_layer(x, x_global, distances, padding_mask)
+            if loss_lk is not None:
+                total_loss_lk += loss_lk
             
-            # 局部MLP处理
-            x = local_layer(x)
-            
-            # 定期进行GCN和Stylization交互
+            # 按 iplm_interval 进行IPLM融合
+            if self.use_iplm and f_ipm is not None and (i + 1) % self.iplm_interval == 0:
+                f_ipmlm, loss_lk_ipm = self.shared_iplm(f_ipm)
+                if loss_lk_ipm is not None:
+                    total_loss_lk += loss_lk_ipm
+                imp_features = self.shared_ipm_to_mlp_proj(f_ipmlm)  # [B, T, D]
+                imp_features = imp_features.unsqueeze(1).permute(0, 1, 3, 2)  # [B, 1, D, T]
+                # 前 1/3 层：增强局部动作；之后：增强全局交互
+                if (i + 1) <= local_phase_end:
+                    x = x + imp_features
+                else:
+                    x_global = x_global + imp_features
+             
+             # 定期进行GCN和Stylization交互
             if (i + 1) % self.interaction_interval == 0 and global_step < len(self.gcn_blocks):
                 # GCN处理: 更新x_global (除第一次外)
                 if global_step > 0:
@@ -482,10 +485,8 @@ class TransMLPWithGCNStylization(nn.Module):
                 
                 global_step += 1
         
-        if self.use_iplm:
-            return x, total_loss_lk
-        else:
-            return x
+        # 始终返回两个值以保持接口一致性
+        return x, total_loss_lk
 
 
 def build_mlps_gcn_stylization(args):

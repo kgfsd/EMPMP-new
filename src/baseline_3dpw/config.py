@@ -103,11 +103,11 @@ C.ipm = edict()
 C.ipm.feature_dim = 64   # F_ipm 的特征维度 (轻量级: 128->64)
 C.ipm.hidden_dim = 128   # InteractionFeatureExtractor 的隐藏层维度 (轻量级: 256->128)
 C.ipm.knowledge_space_size = 256 # 知识空间 K 的大小 (轻量级: 512->256)
-C.ipm.lr = 0.01 
+C.ipm.lr = 0.01
 C.train_weight_lk = 0.1 
-C.motion_mlp.use_iplm=False  
+C.motion_mlp.use_iplm=True    
 C.motion_mlp.iplm_config = config.ipm
-C.motion_mlp.iplm_interval = 8  # 每8层使用一次IPLM (选择性使用)  
+C.motion_mlp.iplm_interval = 4 # 每8层使用一次IPLM (选择性使用)  
 """Train Config"""
 C.use_mixed_people_dataset = False  # 是否使用混合人数数据集
 C.epoch=200
